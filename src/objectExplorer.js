@@ -1378,6 +1378,8 @@ function getObjectLabel(obj) {
 // Simple approach: parse IDs, match against allObjects, update panel UI + stats.
 function handleViewerSelectionChanged(data) {
   if (!allObjects || allObjects.length === 0) return;
+  // Skip if selection was initiated from the panel — we already handled everything
+  if (selectionFromPanel) return;
 
   try {
     // Step 1: Extract all object IDs from event data
