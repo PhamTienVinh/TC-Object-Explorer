@@ -383,6 +383,30 @@ function parseObjectProperties(props, modelId) {
       setName === "tekla quantity"
     ) {
       result.isTekla = true;
+
+      // Debug: log ALL properties from Tekla property sets (first 3 objects only)
+      if (!window._teklaDebugCount) window._teklaDebugCount = 0;
+      if (window._teklaDebugCount < 3) {
+        const propDebug = properties.map(p => `  ${p.name} = ${p.value}`).join("\n");
+        console.log(`[TEKLA DEBUG] Object ${props.id} | PSet: "${pSet.name}"\n${propDebug}`);
+      }
+    }
+
+    // Also detect Tekla from well-known property set patterns
+    if (
+      setName.includes("pset_") ||
+      setName.includes("basequ") ||
+      setName.includes("ifc") ||
+      setName === "quantities"
+    ) {
+      // Scan for assembly-related properties in any property set
+      for (const p of properties) {
+        const pn = (p.name || "").toLowerCase().replace(/[\s_.\-]/g, "");
+        if (pn.includes("assembly") && !result.isTekla) {
+          // If we find assembly-related props, this might be Tekla
+          result.isTekla = true;
+        }
+      }
     }
 
     for (const prop of properties) {
@@ -395,46 +419,71 @@ function parseObjectProperties(props, modelId) {
         result.name = String(propValue || "");
       }
 
-      // Assembly — capture Tekla-specific properties separately
+      // ── Assembly Properties Detection ──
+      // Strategy: scan property name (both original and lowercased) for assembly-related fields
+      const rawPropName = prop.name || "";
       const asmVal = String(propValue || "").trim();
+
       if (asmVal) {
-        // ASSEMBLY_NAME (broad matching)
+        // Normalize: remove spaces, underscores, dots → compare
+        const normalized = propName.replace(/[\s_.\-]/g, "");
+
+        // ASSEMBLY_POS / ASSEMBLY_POSITION (unique per assembly instance)
         if (
-          propName === "assembly_name" || propName === "assemblyname" ||
-          propName === "assembly name" || propName === "assembly.name"
+          normalized === "assemblypos" ||
+          normalized === "assemblyposition" ||
+          rawPropName === "ASSEMBLY_POS" ||
+          rawPropName === "ASSEMBLY.ASSEMBLY_POS" ||
+          rawPropName === "Assembly_Pos" ||
+          rawPropName === "Assembly Pos" ||
+          rawPropName === "AssemblyPos" ||
+          rawPropName === "ASSEMBLY POSITION" ||
+          rawPropName === "Assembly Position" ||
+          (normalized.startsWith("assembly") && (normalized.endsWith("pos") || normalized === "assemblyposition"))
+        ) {
+          result.assemblyPos = asmVal;
+        }
+
+        // ASSEMBLY_NAME
+        if (
+          normalized === "assemblyname" ||
+          rawPropName === "ASSEMBLY_NAME" ||
+          rawPropName === "ASSEMBLY.ASSEMBLY_NAME" ||
+          rawPropName === "Assembly_Name" ||
+          rawPropName === "Assembly Name" ||
+          rawPropName === "AssemblyName" ||
+          (normalized.startsWith("assembly") && normalized.endsWith("name") && !normalized.includes("file"))
         ) {
           result.assemblyName = asmVal;
         }
-        // ASSEMBLY_POS (broad matching for Tekla)
+
+        // ASSEMBLY_POSITION_CODE
         if (
-          propName === "assembly_pos" || propName === "assemblypos" ||
-          propName === "assembly pos" || propName === "assembly position" ||
-          propName === "assembly_position" || propName === "assemblyposition" ||
-          propName === "assembly.pos" || propName === "assembly.position" ||
-          (propName.includes("assembly") && (propName.includes("pos") || propName.includes("position"))) ||
-          propName === "assembly_prefix" ||
-          propName === "assembly prefix"
-        ) {
-          if (!result.assemblyPos) result.assemblyPos = asmVal;
-        }
-        // ASSEMBLY_POSITION_CODE (broad matching)
-        if (
-          propName === "assembly_position_code" || propName === "assemblypositioncode" ||
-          propName === "assembly position code" || propName === "assembly.position_code" ||
-          (propName.includes("assembly") && propName.includes("code"))
+          normalized === "assemblypositioncode" ||
+          normalized === "assemblyprefixcode" ||
+          rawPropName === "ASSEMBLY_POSITION_CODE" ||
+          rawPropName === "ASSEMBLY.ASSEMBLY_POSITION_CODE" ||
+          rawPropName === "Assembly_Position_Code" ||
+          rawPropName === "Assembly Position Code" ||
+          rawPropName === "AssemblyPositionCode" ||
+          (normalized.startsWith("assembly") && normalized.includes("code"))
         ) {
           result.assemblyPosCode = asmVal;
         }
-        // Generic assembly field (fallback)
+
+        // Generic assembly mark (fallback for display)
         if (
-          propName === "assembly" || propName === "assemblycode" ||
-          propName === "assembly code" || propName === "assembly mark" ||
-          propName === "assemblymark" || propName === "assembly_mark" ||
-          propName === "tekla assembly mark" || propName === "tekla_assembly" ||
-          propName === "mainmark" || propName === "main mark" ||
-          propName === "part_pos" || propName === "partpos" ||
-          propName === "part pos" || propName === "preliminary mark" ||
-          propName === "preliminarymark"
+          propName === "assembly" ||
+          normalized === "assemblymark" ||
+          normalized === "assemblycode" ||
+          rawPropName === "ASSEMBLY_MARK" ||
+          rawPropName === "ASSEMBLY MARK" ||
+          rawPropName === "Assembly Mark" ||
+          propName === "tekla assembly mark" ||
+          propName === "tekla_assembly" ||
+          normalized === "mainmark" ||
+          normalized === "partpos" ||
+          normalized === "preliminarymark"
         ) {
           if (!result.assembly) result.assembly = asmVal;
         }
@@ -566,6 +615,16 @@ function parseObjectProperties(props, modelId) {
     if (desc && desc !== result.name) {
       result.assembly = desc;
     }
+  }
+
+  // Debug: log parsed assembly fields for first Tekla objects
+  if (result.isTekla && window._teklaDebugCount < 3) {
+    window._teklaDebugCount++;
+    console.log(`[TEKLA PARSED] Object ${result.id} "${result.name}"`,
+      `| assemblyPos="${result.assemblyPos}"`,
+      `| assemblyName="${result.assemblyName}"`,
+      `| assemblyPosCode="${result.assemblyPosCode}"`,
+      `| assembly="${result.assembly}"`);
   }
 
   // Fallback name
