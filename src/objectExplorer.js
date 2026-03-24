@@ -872,156 +872,67 @@ function toggleSelection(uid, el) {
   syncSelectionToViewer();
 }
 
-// ── Select Assembly — select all objects in the same assembly as the selected object ──
-// Strategy 1: Tree DOM group (if object is in rendered tree)
-// Strategy 2: Data matching by ASSEMBLY_POS
-// Strategy 3: Viewer Hierarchy API (walk up to IfcElementAssembly parent)
-async function selectAssembly() {
+// ── Select Assembly — select all objects with the SAME ASSEMBLY_POS as the selected object ──
+// Always matches by assemblyPos data field, never by DOM tree groups
+function selectAssembly() {
   if (selectedIds.size === 0) return;
 
   const firstUid = selectedIds.values().next().value;
-  console.log("[SelectAssembly] Starting. UID:", firstUid, "| selectedIds count:", selectedIds.size);
+  console.log("[SelectAssembly] UID:", firstUid);
 
-  // ── Strategy 1: DOM-based — find tree-group containing this item ──
-  const selectedEl = document.querySelector(`.tree-item[data-uid="${firstUid}"]`);
-  if (selectedEl) {
-    const groupEl = selectedEl.closest(".tree-group");
-    if (groupEl) {
-      const groupName = groupEl.dataset.group || "unknown";
-      const groupItems = groupEl.querySelectorAll(".tree-item");
-      console.log(`[SelectAssembly] Strategy 1 (DOM): group="${groupName}", items=${groupItems.length}`);
+  // Try to find the object in allObjects by UID
+  let matchObj = allObjects.find((o) => `${o.modelId}:${o.id}` === firstUid);
 
-      for (const item of groupItems) {
-        const uid = item.dataset.uid;
-        if (uid) {
-          selectedIds.add(uid);
-          item.classList.add("selected");
-          const cb = item.querySelector(".tree-item-checkbox");
-          if (cb) cb.checked = true;
-        }
-      }
-
-      updateGroupCheckboxStates();
-      updateSummary();
-      notifySelectionChanged();
-      applyHighlightColors();
-      syncSelectionToViewer();
-      return;
-    }
-  }
-
-  // ── Strategy 2: Data-based — match by assemblyPos field ──
-  const firstObj = allObjects.find((o) => `${o.modelId}:${o.id}` === firstUid);
-  if (firstObj && firstObj.assemblyPos) {
-    const targetPos = firstObj.assemblyPos;
-    console.log(`[SelectAssembly] Strategy 2 (Data): ASSEMBLY_POS="${targetPos}"`);
-
-    for (const obj of allObjects) {
-      if (obj.assemblyPos === targetPos) {
-        const uid = `${obj.modelId}:${obj.id}`;
-        selectedIds.add(uid);
-      }
-    }
-
-    // Update tree UI
-    document.querySelectorAll(".tree-item").forEach((el) => {
-      if (selectedIds.has(el.dataset.uid)) {
-        el.classList.add("selected");
-        const cb = el.querySelector(".tree-item-checkbox");
-        if (cb) cb.checked = true;
-      }
-    });
-
-    updateGroupCheckboxStates();
-    updateSummary();
-    notifySelectionChanged();
-    applyHighlightColors();
-    syncSelectionToViewer();
-    return;
-  }
-
-  // ── Strategy 3: Viewer Hierarchy API — walk up to find IfcElementAssembly parent ──
-  if (!viewerRef) {
-    console.log("[SelectAssembly] No viewer available for hierarchy strategy");
-    return;
-  }
-
-  try {
-    // Parse modelId and objectId from the UID
+  // If not found by exact UID, try parsing objectId and matching numerically
+  if (!matchObj) {
     const idx = firstUid.indexOf(":");
-    const modelId = firstUid.substring(0, idx);
-    const objectId = parseInt(firstUid.substring(idx + 1));
-    if (isNaN(objectId)) {
-      console.log("[SelectAssembly] Invalid objectId from UID:", firstUid);
-      return;
-    }
-
-    console.log(`[SelectAssembly] Strategy 3 (Hierarchy API): model=${modelId}, object=${objectId}`);
-
-    // Walk up the hierarchy to find the IfcElementAssembly parent
-    let currentIds = [objectId];
-    let assemblyParentId = null;
-    const maxDepth = 10; // Prevent infinite loops
-
-    for (let depth = 0; depth < maxDepth; depth++) {
-      try {
-        const parents = await viewerRef.getHierarchyChildren(modelId, currentIds, 0, false);
-        // getHierarchyChildren with depth=0 returns the objects themselves
-        // We need getHierarchyParent or walk up manually
-        break;
-      } catch (e) {
-        break;
+    if (idx > 0) {
+      const modelId = firstUid.substring(0, idx);
+      const objectId = parseInt(firstUid.substring(idx + 1));
+      if (!isNaN(objectId)) {
+        matchObj = allObjects.find(o => o.modelId === modelId && o.id === objectId);
+        if (!matchObj) matchObj = allObjects.find(o => o.modelId === modelId && String(o.id) === String(objectId));
       }
     }
-
-    // Alternative: get children of the same parent
-    // First, find what group this object belongs to by checking allObjects
-    // with matching modelId
-    const modelObjects = allObjects.filter(o => o.modelId === modelId);
-    if (modelObjects.length > 0) {
-      // Try to find the object by matching objectId variations
-      let matchObj = modelObjects.find(o => o.id === objectId);
-      if (!matchObj) matchObj = modelObjects.find(o => String(o.id) === String(objectId));
-      
-      if (matchObj && matchObj.assemblyPos) {
-        console.log(`[SelectAssembly] Strategy 3: Found match by objectId, ASSEMBLY_POS="${matchObj.assemblyPos}"`);
-        for (const obj of allObjects) {
-          if (obj.assemblyPos === matchObj.assemblyPos) {
-            selectedIds.add(`${obj.modelId}:${obj.id}`);
-          }
-        }
-      } else {
-        console.log("[SelectAssembly] Strategy 3: No ASSEMBLY_POS found for object", objectId);
-        // Last resort: select all objects sharing the same getGroupKey
-        const groupBy = document.getElementById("group-by-select").value;
-        if (matchObj) {
-          const targetKey = getGroupKey(matchObj, groupBy);
-          for (const obj of allObjects) {
-            if (getGroupKey(obj, groupBy) === targetKey) {
-              selectedIds.add(`${obj.modelId}:${obj.id}`);
-            }
-          }
-        }
-      }
-    }
-
-    // Update tree UI
-    document.querySelectorAll(".tree-item").forEach((el) => {
-      if (selectedIds.has(el.dataset.uid)) {
-        el.classList.add("selected");
-        const cb = el.querySelector(".tree-item-checkbox");
-        if (cb) cb.checked = true;
-      }
-    });
-
-    updateGroupCheckboxStates();
-    updateSummary();
-    notifySelectionChanged();
-    applyHighlightColors();
-    syncSelectionToViewer();
-  } catch (e) {
-    console.error("[SelectAssembly] Hierarchy API failed:", e);
   }
+
+  if (!matchObj) {
+    console.log("[SelectAssembly] Object not found in allObjects");
+    return;
+  }
+
+  if (!matchObj.assemblyPos) {
+    console.log("[SelectAssembly] Object has no ASSEMBLY_POS:", matchObj.name);
+    return;
+  }
+
+  const targetPos = matchObj.assemblyPos;
+  console.log(`[SelectAssembly] ASSEMBLY_POS = "${targetPos}" (from object "${matchObj.name}")`);
+
+  // Select ONLY objects with the exact same assemblyPos
+  let count = 0;
+  for (const obj of allObjects) {
+    if (obj.assemblyPos === targetPos) {
+      selectedIds.add(`${obj.modelId}:${obj.id}`);
+      count++;
+    }
+  }
+  console.log(`[SelectAssembly] Selected ${count} objects with ASSEMBLY_POS="${targetPos}"`);
+
+  // Update tree UI
+  document.querySelectorAll(".tree-item").forEach((el) => {
+    if (selectedIds.has(el.dataset.uid)) {
+      el.classList.add("selected");
+      const cb = el.querySelector(".tree-item-checkbox");
+      if (cb) cb.checked = true;
+    }
+  });
+
+  updateGroupCheckboxStates();
+  updateSummary();
+  notifySelectionChanged();
+  applyHighlightColors();
+  syncSelectionToViewer();
 }
 
 // ── Collapse / Expand All Groups ──
