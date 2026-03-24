@@ -168,12 +168,12 @@ function exportExcel(selectedOnly) {
 // ── Helpers ──
 function getGroupKey(obj, groupBy) {
   switch (groupBy) {
-    case "assembly": return obj.assembly;
+    case "assembly": return obj.assemblyDisplayName || obj.assembly;
     case "name": return obj.name;
     case "group": return obj.group;
     case "material": return obj.material;
     case "source": return obj.isTekla ? "Tekla Structures" : "Khác";
-    default: return obj.assembly;
+    default: return obj.assemblyDisplayName || obj.assembly;
   }
 }
 
