@@ -31,7 +31,8 @@ const IFC_3D_CLASSES = new Set([
   // Building elements
   'IfcDoor', 'IfcWindow', 'IfcCovering',
   'IfcBuildingElementProxy', 'IfcBuildingElement',
-  // Steel / Tekla
+  // Steel / Tekla (including assemblies)
+  'IfcElementAssembly',
   'IfcDiscreteAccessory', 'IfcFastener', 'IfcMechanicalFastener',
   'IfcReinforcingBar', 'IfcReinforcingMesh', 'IfcTendon', 'IfcTendonAnchor',
   // MEP
