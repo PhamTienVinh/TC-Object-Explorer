@@ -40,7 +40,6 @@ export function exportToExcel(data, groupBy, selectedOnly) {
     groups[key].volume += obj.volume || 0;
     groups[key].weight += obj.weight || 0;
     groups[key].area += obj.area || 0;
-    groups[key].length += obj.length || 0;
   }
 
   const summaryHeader = [
@@ -50,10 +49,10 @@ export function exportToExcel(data, groupBy, selectedOnly) {
     [`Nhóm theo: ${getGroupLabel(groupBy)}`],
     [`Tổng số đối tượng: ${data.length}`],
     [],
-    [getGroupLabel(groupBy), "Số lượng", "Thể tích (m³)", "Diện tích (m²)", "Khối lượng (kg)", "Chiều dài (m)"],
+    [getGroupLabel(groupBy), "Số lượng", "Thể tích (m³)", "Diện tích (m²)", "Khối lượng (kg)"],
   ];
 
-  let totalVolume = 0, totalWeight = 0, totalArea = 0, totalLength = 0;
+  let totalVolume = 0, totalWeight = 0, totalArea = 0;
   const summaryRows = [];
 
   for (const key of Object.keys(groups).sort()) {
@@ -61,15 +60,14 @@ export function exportToExcel(data, groupBy, selectedOnly) {
     totalVolume += g.volume;
     totalWeight += g.weight;
     totalArea += g.area;
-    totalLength += g.length;
-    summaryRows.push([key, g.count, r(g.volume, 6), r(g.area, 4), r(g.weight, 2), r(g.length, 3)]);
+    summaryRows.push([key, g.count, r(g.volume, 6), r(g.area, 4), r(g.weight, 2)]);
   }
   summaryRows.push([]);
-  summaryRows.push(["TỔNG CỘNG", data.length, r(totalVolume, 6), r(totalArea, 4), r(totalWeight, 2), r(totalLength, 3)]);
+  summaryRows.push(["TỔNG CỘNG", data.length, r(totalVolume, 6), r(totalArea, 4), r(totalWeight, 2)]);
 
   const wsSummary = XLSX.utils.aoa_to_sheet([...summaryHeader, ...summaryRows]);
-  wsSummary["!cols"] = [{ wch: 35 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 15 }];
-  wsSummary["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } }];
+  wsSummary["!cols"] = [{ wch: 35 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 18 }];
+  wsSummary["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
   XLSX.utils.book_append_sheet(wb, wsSummary, "Tổng hợp");
 
   // ── Sheet 2: Detail (full columns) ──
@@ -81,7 +79,7 @@ export function exportToExcel(data, groupBy, selectedOnly) {
       "STT", "Tên", "Profile", "IFC Class", "Object Type",
       "Assembly Pos", "Assembly Name", "Assembly Code",
       "Group", "Vật liệu",
-      "Thể tích (m³)", "Diện tích (m²)", "Khối lượng (kg)", "Chiều dài (m)",
+      "Thể tích (m³)", "Diện tích (m²)", "Khối lượng (kg)",
     ],
   ];
 
@@ -113,7 +111,7 @@ export function exportToExcel(data, groupBy, selectedOnly) {
       currentAsmName = null; // Reset subgroup
       detailRows.push([]); // blank separator
       const headerRowIdx = detailHeader.length + detailRows.length;
-      detailRows.push([`▶ ASSEMBLY POS: ${pos}`, "", "", "", "", "", "", "", "", "", "", "", "", ""]);
+      detailRows.push([`▶ ASSEMBLY POS: ${pos}`, "", "", "", "", "", "", "", "", "", "", "", ""]);
       mergeRows.push(headerRowIdx);
     }
 
@@ -121,7 +119,7 @@ export function exportToExcel(data, groupBy, selectedOnly) {
     if (asmName !== currentAsmName) {
       currentAsmName = asmName;
       const headerRowIdx = detailHeader.length + detailRows.length;
-      detailRows.push([`   ▸ ASSEMBLY NAME: ${asmName}`, "", "", "", "", "", "", "", "", "", "", "", "", ""]);
+      detailRows.push([`   ▸ ASSEMBLY NAME: ${asmName}`, "", "", "", "", "", "", "", "", "", "", "", ""]);
       mergeRows.push(headerRowIdx);
     }
 
@@ -140,14 +138,13 @@ export function exportToExcel(data, groupBy, selectedOnly) {
       r(obj.volume || 0, 6),
       r(obj.area || 0, 4),
       r(obj.weight || 0, 2),
-      r(obj.length || 0, 3),
     ]);
   }
 
   detailRows.push([]);
   detailRows.push([
     "", "TỔNG CỘNG", "", "", "", "", "", "", "", "",
-    r(totalVolume, 6), r(totalArea, 4), r(totalWeight, 2), r(totalLength, 3),
+    r(totalVolume, 6), r(totalArea, 4), r(totalWeight, 2),
   ]);
 
   const wsDetail = XLSX.utils.aoa_to_sheet([...detailHeader, ...detailRows]);
@@ -155,13 +152,13 @@ export function exportToExcel(data, groupBy, selectedOnly) {
     { wch: 6 }, { wch: 28 }, { wch: 18 }, { wch: 22 }, { wch: 22 },
     { wch: 18 }, { wch: 22 }, { wch: 18 },
     { wch: 18 }, { wch: 15 },
-    { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 14 },
+    { wch: 16 }, { wch: 16 }, { wch: 16 },
   ];
 
   // Merge: title row + all group header rows
-  const merges = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 13 } }];
+  const merges = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 12 } }];
   for (const rowIdx of mergeRows) {
-    merges.push({ s: { r: rowIdx, c: 0 }, e: { r: rowIdx, c: 13 } });
+    merges.push({ s: { r: rowIdx, c: 0 }, e: { r: rowIdx, c: 12 } });
   }
   wsDetail["!merges"] = merges;
   XLSX.utils.book_append_sheet(wb, wsDetail, "Chi tiết");
@@ -241,38 +238,36 @@ function createGroupSheet(data, groupBy, label) {
   for (const obj of data) {
     const key = getGroupKey(obj, groupBy) || "(Không xác định)";
     if (!groups[key]) {
-      groups[key] = { count: 0, volume: 0, weight: 0, area: 0, length: 0 };
+      groups[key] = { count: 0, volume: 0, weight: 0, area: 0 };
     }
     groups[key].count++;
     groups[key].volume += obj.volume || 0;
     groups[key].weight += obj.weight || 0;
     groups[key].area += obj.area || 0;
-    groups[key].length += obj.length || 0;
   }
 
   const rows = [
     [`THỐNG KÊ THEO ${label.toUpperCase()}`],
     [],
-    [label, "Số lượng", "Thể tích (m³)", "Diện tích (m²)", "Khối lượng (kg)", "Chiều dài (m)"],
+    [label, "Số lượng", "Thể tích (m³)", "Diện tích (m²)", "Khối lượng (kg)"],
   ];
 
-  let totalVol = 0, totalWt = 0, totalArea = 0, totalLen = 0;
+  let totalVol = 0, totalWt = 0, totalArea = 0;
 
   for (const key of Object.keys(groups).sort()) {
     const g = groups[key];
     totalVol += g.volume;
     totalWt += g.weight;
     totalArea += g.area;
-    totalLen += g.length;
-    rows.push([key, g.count, r(g.volume, 6), r(g.area, 4), r(g.weight, 2), r(g.length, 3)]);
+    rows.push([key, g.count, r(g.volume, 6), r(g.area, 4), r(g.weight, 2)]);
   }
 
   rows.push([]);
-  rows.push(["TỔNG CỘNG", data.length, r(totalVol, 6), r(totalArea, 4), r(totalWt, 2), r(totalLen, 3)]);
+  rows.push(["TỔNG CỘNG", data.length, r(totalVol, 6), r(totalArea, 4), r(totalWt, 2)]);
 
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws["!cols"] = [{ wch: 35 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 15 }];
-  ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } }];
+  ws["!cols"] = [{ wch: 35 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 18 }];
+  ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
   return ws;
 }
 
