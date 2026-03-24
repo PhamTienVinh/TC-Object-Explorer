@@ -337,6 +337,13 @@ select:focus {
   box-shadow: var(--shadow-glow);
 }
 
+.action-btn.primary.active {
+  background: var(--accent);
+  border-color: #79c0ff;
+  box-shadow: 0 0 16px rgba(88, 166, 255, 0.4);
+  color: #fff;
+}
+
 .action-btn.warning {
   background: rgba(210, 153, 34, 0.15);
   border-color: var(--warning);

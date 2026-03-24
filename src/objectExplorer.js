@@ -435,7 +435,7 @@ function renderTree() {
           }
           updateSummary();
           notifySelectionChanged();
-          if (highlightActive) autoHighlightSelected();
+          if (highlightActive) applyHighlightColors();
           return;
         }
       }
@@ -461,7 +461,7 @@ function renderTree() {
       lastClickedItem = el;
       updateSummary();
       notifySelectionChanged();
-      if (highlightActive) autoHighlightSelected();
+      if (highlightActive) applyHighlightColors();
     });
   });
 }
@@ -479,12 +479,8 @@ function toggleSelection(uid, el) {
   updateSummary();
   notifySelectionChanged();
 
-  // Quick highlight on single click (selection outline in 3D)
-  const [modelId, objectId] = uid.split(":");
-  highlightSingle(modelId, parseInt(objectId));
-
   // If highlight mode is active, also apply colored highlight to all selected
-  if (highlightActive) autoHighlightSelected();
+  if (highlightActive) applyHighlightColors();
 }
 
 function getGroupKey(obj, groupBy) {
@@ -499,14 +495,33 @@ function getGroupKey(obj, groupBy) {
 }
 
 // ── Highlight ──
-async function highlightSingle(modelId, objectId) {
+// Sync panel selection state to TC viewer (without triggering viewer event loop)
+async function syncSelectionToViewer() {
+  if (selectedIds.size === 0) {
+    try {
+      isSyncingFromViewer = true;
+      await viewerRef.setSelection({ modelObjectIds: [] }, "set");
+    } catch (e) { /* ignore */ }
+    finally { isSyncingFromViewer = false; }
+    return;
+  }
+
+  const modelMap = buildModelMap();
   try {
+    isSyncingFromViewer = true;
     await viewerRef.setSelection(
-      { modelObjectIds: [{ modelId, objectRuntimeIds: [objectId] }] },
+      {
+        modelObjectIds: Object.entries(modelMap).map(([modelId, ids]) => ({
+          modelId,
+          objectRuntimeIds: ids,
+        })),
+      },
       "set"
     );
   } catch (e) {
     console.warn("[ObjectExplorer] setSelection failed:", e);
+  } finally {
+    isSyncingFromViewer = false;
   }
 }
 
@@ -533,28 +548,23 @@ async function toggleHighlight() {
     return;
   }
 
-  await autoHighlightSelected();
+  await applyHighlightColors();
 }
 
-// Auto-apply colored highlight to all currently selected objects
-async function autoHighlightSelected() {
-  if (selectedIds.size === 0) return;
+// Apply colored highlight overlay to all selected objects (does NOT change viewer selection)
+async function applyHighlightColors() {
+  if (selectedIds.size === 0) {
+    // Clear colors if nothing selected
+    try {
+      await viewerRef.setObjectState(undefined, { color: "reset" });
+    } catch (e) { /* ignore */ }
+    return;
+  }
 
   const modelMap = buildModelMap();
 
   try {
-    // Set selection
-    await viewerRef.setSelection(
-      {
-        modelObjectIds: Object.entries(modelMap).map(([modelId, ids]) => ({
-          modelId,
-          objectRuntimeIds: ids,
-        })),
-      },
-      "set"
-    );
-
-    // Apply color overlay (bright blue highlight)
+    // Apply color overlay (bright blue highlight) — only color, not selection
     await viewerRef.setObjectState(
       {
         modelObjectIds: Object.entries(modelMap).map(([modelId, ids]) => ({
@@ -565,9 +575,9 @@ async function autoHighlightSelected() {
       { color: { r: 88, g: 166, b: 255, a: 200 } }
     );
 
-    console.log(`[ObjectExplorer] Auto-highlighted ${selectedIds.size} objects`);
+    console.log(`[ObjectExplorer] Applied highlight colors to ${selectedIds.size} objects`);
   } catch (e) {
-    console.error("[ObjectExplorer] Highlight failed:", e);
+    console.error("[ObjectExplorer] Highlight color failed:", e);
   }
 }
 
@@ -720,7 +730,7 @@ function handleViewerSelectionChanged(data) {
 
     updateSummary();
     notifySelectionChanged();
-    if (highlightActive) autoHighlightSelected();
+    if (highlightActive) applyHighlightColors();
 
     console.log(`[ObjectExplorer] Synced ${viewerSelectedUids.size} objects from TC viewer`);
   } catch (e) {
