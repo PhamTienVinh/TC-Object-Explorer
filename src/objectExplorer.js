@@ -14,7 +14,6 @@ let allObjects = []; // { id, modelId, name, assembly, group, type, material, vo
 let filteredObjects = [];
 let selectedIds = new Set(); // Set of "modelId:objectId"
 let isolateActive = false;
-let highlightActive = false;
 let searchTimeout = null;
 let lastClickedItem = null; // for Shift+click range selection
 let lastClickAction = "select"; // "select" or "deselect" — for Shift range
@@ -41,7 +40,6 @@ export function initObjectExplorer(api, viewer) {
   document.getElementById("search-input").addEventListener("input", onSearchInput);
   document.getElementById("search-clear-btn").addEventListener("click", clearSearch);
   document.getElementById("group-by-select").addEventListener("change", renderTree);
-  document.getElementById("btn-highlight").addEventListener("click", toggleHighlight);
   document.getElementById("btn-isolate").addEventListener("click", toggleIsolate);
   document.getElementById("btn-reset").addEventListener("click", resetAll);
   document.getElementById("btn-refresh").addEventListener("click", scanObjects);
@@ -435,7 +433,7 @@ function renderTree() {
           }
           updateSummary();
           notifySelectionChanged();
-          if (highlightActive) applyHighlightColors();
+          applyHighlightColors();
           return;
         }
       }
@@ -461,7 +459,7 @@ function renderTree() {
       lastClickedItem = el;
       updateSummary();
       notifySelectionChanged();
-      if (highlightActive) applyHighlightColors();
+      applyHighlightColors();
     });
   });
 }
@@ -478,9 +476,7 @@ function toggleSelection(uid, el) {
   }
   updateSummary();
   notifySelectionChanged();
-
-  // If highlight mode is active, also apply colored highlight to all selected
-  if (highlightActive) applyHighlightColors();
+  applyHighlightColors();
 }
 
 function getGroupKey(obj, groupBy) {
@@ -525,46 +521,20 @@ async function syncSelectionToViewer() {
   }
 }
 
-async function toggleHighlight() {
-  const btn = document.getElementById("btn-highlight");
 
-  if (highlightActive) {
-    // Toggle OFF — clear highlight colors
-    highlightActive = false;
-    btn.classList.remove("active");
-    try {
-      await viewerRef.setObjectState(undefined, { color: "reset" });
-    } catch (e) { /* ignore */ }
-    console.log("[ObjectExplorer] Highlight mode OFF");
-    return;
-  }
-
-  // Toggle ON
-  highlightActive = true;
-  btn.classList.add("active");
-
-  if (selectedIds.size === 0) {
-    console.log("[ObjectExplorer] Highlight mode ON — no objects selected yet");
-    return;
-  }
-
-  await applyHighlightColors();
-}
-
-// Apply colored highlight overlay to all selected objects (does NOT change viewer selection)
+// Apply colored highlight overlay to all selected objects (auto-highlight)
 async function applyHighlightColors() {
-  if (selectedIds.size === 0) {
-    // Clear colors if nothing selected
-    try {
-      await viewerRef.setObjectState(undefined, { color: "reset" });
-    } catch (e) { /* ignore */ }
-    return;
-  }
+  try {
+    // Always reset colors first
+    await viewerRef.setObjectState(undefined, { color: "reset" });
+  } catch (e) { /* ignore */ }
+
+  if (selectedIds.size === 0) return;
 
   const modelMap = buildModelMap();
 
   try {
-    // Apply color overlay (bright blue highlight) — only color, not selection
+    // Apply color overlay (bright blue highlight) to selected objects
     await viewerRef.setObjectState(
       {
         modelObjectIds: Object.entries(modelMap).map(([modelId, ids]) => ({
@@ -575,7 +545,7 @@ async function applyHighlightColors() {
       { color: { r: 88, g: 166, b: 255, a: 200 } }
     );
 
-    console.log(`[ObjectExplorer] Applied highlight colors to ${selectedIds.size} objects`);
+    console.log(`[ObjectExplorer] Auto-highlighted ${selectedIds.size} objects`);
   } catch (e) {
     console.error("[ObjectExplorer] Highlight color failed:", e);
   }
@@ -712,8 +682,8 @@ function handleViewerSelectionChanged(data) {
       }
     }
 
-    // Replace panel selection with viewer selection (real-time sync)
-    selectedIds.clear();
+    // ADD viewer selection to existing panel selection (persistent memory)
+    // Only add new items from viewer, keep previously selected items
     for (const uid of viewerSelectedUids) {
       selectedIds.add(uid);
     }
@@ -730,7 +700,7 @@ function handleViewerSelectionChanged(data) {
 
     updateSummary();
     notifySelectionChanged();
-    if (highlightActive) applyHighlightColors();
+    applyHighlightColors();
 
     console.log(`[ObjectExplorer] Synced ${viewerSelectedUids.size} objects from TC viewer`);
   } catch (e) {
@@ -763,13 +733,10 @@ function createLabelSvgDataUrl(text) {
 async function resetAll() {
   selectedIds.clear();
   isolateActive = false;
-  highlightActive = false;
   lastClickedItem = null;
 
   const btnIsolate = document.getElementById("btn-isolate");
-  const btnHighlight = document.getElementById("btn-highlight");
   if (btnIsolate) btnIsolate.classList.remove("active");
-  if (btnHighlight) btnHighlight.classList.remove("active");
 
   try {
     // Clear selection
