@@ -237,6 +237,25 @@ async function scanObjects() {
       `[ObjectExplorer] Filtered: ${beforeFilter} → ${allObjects.length} objects (removed ${beforeFilter - allObjects.length} non-3D)`,
     );
 
+    // Assign unique assembly instance IDs
+    // Objects from the same IFC assembly subtree are scanned consecutively,
+    // so consecutive objects with the same assembly name = same instance
+    let currentAsm = "";
+    let instanceCounter = 0;
+    for (const obj of allObjects) {
+      if (obj.assembly) {
+        if (obj.assembly !== currentAsm) {
+          currentAsm = obj.assembly;
+          instanceCounter++;
+        }
+        obj.assemblyInstanceId = `${obj.modelId}:${obj.assembly}#${instanceCounter}`;
+      } else {
+        obj.assemblyInstanceId = "";
+        currentAsm = "";
+      }
+    }
+    console.log(`[ObjectExplorer] Assigned ${instanceCounter} assembly instances`);
+
     filteredObjects = [...allObjects];
     selectedIds.clear();
     updateSummary();
@@ -757,24 +776,24 @@ function toggleSelection(uid, el) {
   syncSelectionToViewer();
 }
 
-// ── Select Assembly — select all objects sharing the same assembly as the first selected object ──
+// ── Select Assembly — select all objects in the SAME ASSEMBLY INSTANCE as the first selected object ──
 function selectAssembly() {
   if (selectedIds.size === 0) return;
 
   // Find the first selected object
   const firstUid = selectedIds.values().next().value;
   const firstObj = allObjects.find((o) => `${o.modelId}:${o.id}` === firstUid);
-  if (!firstObj || !firstObj.assembly) {
-    console.log("[ObjectExplorer] Selected object has no assembly");
+  if (!firstObj || !firstObj.assemblyInstanceId) {
+    console.log("[ObjectExplorer] Selected object has no assembly instance");
     return;
   }
 
-  const targetAssembly = firstObj.assembly;
-  console.log(`[ObjectExplorer] Selecting all objects in assembly: ${targetAssembly}`);
+  const targetInstanceId = firstObj.assemblyInstanceId;
+  console.log(`[ObjectExplorer] Selecting assembly instance: ${targetInstanceId} (${firstObj.assembly})`);
 
-  // Select all objects with the same assembly
+  // Select only objects in the SAME assembly instance
   for (const obj of allObjects) {
-    if (obj.assembly === targetAssembly) {
+    if (obj.assemblyInstanceId === targetInstanceId) {
       selectedIds.add(`${obj.modelId}:${obj.id}`);
     }
   }
