@@ -5,7 +5,7 @@
  * Integrates with objectExplorer for data and with excelExport for export.
  */
 
-import { getAllObjects, getSelectedObjects } from "./objectExplorer.js";
+import { getAllObjects, getSelectedObjects, getSelectedIds } from "./objectExplorer.js";
 import { exportToExcel } from "./excelExport.js";
 
 // ── Constants ──
@@ -31,6 +31,11 @@ export function initSteelStatistics(api, viewer) {
   document.getElementById("stats-all-toggle").addEventListener("change", updateStatistics);
   document.getElementById("btn-export-all").addEventListener("click", () => exportExcel(false));
   document.getElementById("btn-export-selected").addEventListener("click", () => exportExcel(true));
+
+  // Listen for real-time selection changes
+  window.addEventListener("selection-changed", () => {
+    updateStatistics();
+  });
 }
 
 // ── Update Statistics ──
@@ -38,7 +43,16 @@ function updateStatistics() {
   const showAll = document.getElementById("stats-all-toggle").checked;
   const groupBy = document.getElementById("stats-group-by").value;
 
-  const objects = showAll ? getAllObjects() : getSelectedObjects();
+  // When "Toàn bộ dự án" is unchecked, show selected objects; if none selected, show all
+  const selIds = getSelectedIds();
+  let objects;
+  if (showAll) {
+    objects = getAllObjects();
+  } else if (selIds.size > 0) {
+    objects = getSelectedObjects();
+  } else {
+    objects = getAllObjects();
+  }
   if (!objects || objects.length === 0) {
     clearStats();
     return;
@@ -164,8 +178,6 @@ function formatNumber(n) {
 }
 
 function formatVolume(v) {
-  if (v >= 1) return v.toFixed(3) + " m³";
-  if (v >= 0.001) return (v * 1000).toFixed(2) + " dm³";
   return v.toFixed(6) + " m³";
 }
 

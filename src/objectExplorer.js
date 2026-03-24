@@ -15,8 +15,10 @@ let filteredObjects = [];
 let selectedIds = new Set(); // Set of "modelId:objectId"
 let labelsVisible = false;
 let isolateActive = false;
+let highlightActive = false;
 let searchTimeout = null;
 let currentLabelIcons = []; // track added icon IDs for removal
+let lastClickedItem = null; // for Shift+click range selection
 
 // ── Init ──
 export function initObjectExplorer(api, viewer) {
@@ -42,6 +44,7 @@ export function initObjectExplorer(api, viewer) {
 
 // ── Export data for statistics module ──
 export function getAllObjects() { return allObjects; }
+export function getSelectedIds() { return selectedIds; }
 export function getSelectedObjects() {
   if (selectedIds.size === 0) return allObjects;
   return allObjects.filter((o) => selectedIds.has(`${o.modelId}:${o.id}`));
@@ -366,12 +369,35 @@ function renderTree() {
   container.innerHTML = html;
   document.getElementById("groups-count").textContent = `${sortedKeys.length} nhóm`;
 
-  // Bind click events
-  container.querySelectorAll(".tree-item").forEach((el) => {
+  // Bind click events with Shift+click support
+  const allItems = Array.from(container.querySelectorAll(".tree-item"));
+  allItems.forEach((el, index) => {
     el.addEventListener("click", (e) => {
       if (e.target.classList.contains("tree-item-checkbox")) return;
+
+      if (e.shiftKey && lastClickedItem !== null) {
+        // Shift+click: select range
+        const lastIndex = allItems.indexOf(lastClickedItem);
+        if (lastIndex >= 0) {
+          const start = Math.min(lastIndex, index);
+          const end = Math.max(lastIndex, index);
+          for (let i = start; i <= end; i++) {
+            const item = allItems[i];
+            const uid = item.dataset.uid;
+            selectedIds.add(uid);
+            item.classList.add("selected");
+            item.querySelector(".tree-item-checkbox").checked = true;
+          }
+          updateSummary();
+          notifySelectionChanged();
+          if (highlightActive) autoHighlightSelected();
+          return;
+        }
+      }
+
       const uid = el.dataset.uid;
       toggleSelection(uid, el);
+      lastClickedItem = el;
     });
 
     el.querySelector(".tree-item-checkbox").addEventListener("change", (e) => {
@@ -383,7 +409,10 @@ function renderTree() {
         selectedIds.delete(uid);
         el.classList.remove("selected");
       }
+      lastClickedItem = el;
       updateSummary();
+      notifySelectionChanged();
+      if (highlightActive) autoHighlightSelected();
     });
   });
 }
@@ -399,10 +428,14 @@ function toggleSelection(uid, el) {
     el.querySelector(".tree-item-checkbox").checked = true;
   }
   updateSummary();
+  notifySelectionChanged();
 
-  // Quick highlight on single click
+  // Quick highlight on single click (selection outline in 3D)
   const [modelId, objectId] = uid.split(":");
   highlightSingle(modelId, parseInt(objectId));
+
+  // If highlight mode is active, also apply colored highlight to all selected
+  if (highlightActive) autoHighlightSelected();
 }
 
 function getGroupKey(obj, groupBy) {
@@ -429,10 +462,21 @@ async function highlightSingle(modelId, objectId) {
 }
 
 async function highlightSelected() {
+  // Toggle highlight mode ON
+  highlightActive = true;
+  document.getElementById("btn-highlight").classList.add("active");
+
   if (selectedIds.size === 0) {
-    console.log("[ObjectExplorer] No objects selected");
+    console.log("[ObjectExplorer] Highlight mode ON — no objects selected yet");
     return;
   }
+
+  await autoHighlightSelected();
+}
+
+// Auto-apply colored highlight to all currently selected objects
+async function autoHighlightSelected() {
+  if (selectedIds.size === 0) return;
 
   const modelMap = buildModelMap();
 
@@ -459,7 +503,7 @@ async function highlightSelected() {
       { color: { r: 88, g: 166, b: 255, a: 200 } }
     );
 
-    console.log(`[ObjectExplorer] Highlighted ${selectedIds.size} objects`);
+    console.log(`[ObjectExplorer] Auto-highlighted ${selectedIds.size} objects`);
   } catch (e) {
     console.error("[ObjectExplorer] Highlight failed:", e);
   }
@@ -552,7 +596,7 @@ async function toggleLabels() {
 
   const objectsToLabel = selectedIds.size > 0
     ? allObjects.filter((o) => selectedIds.has(`${o.modelId}:${o.id}`))
-    : filteredObjects.slice(0, 50); // Limit labels
+    : filteredObjects.slice(0, 100); // Limit labels
 
   if (objectsToLabel.length === 0) return;
 
@@ -590,7 +634,7 @@ async function toggleLabels() {
 
             icons.push({
               id: iconIdCounter++,
-              iconPath: createLabelSvgDataUrl(obj.name || `Object ${obj.id}`),
+              iconPath: createLabelSvgDataUrl(getObjectLabel(obj)),
               position: pos,
               size: 48,
             });
@@ -609,7 +653,7 @@ async function toggleLabels() {
 
               icons.push({
                 id: iconIdCounter++,
-                iconPath: createLabelSvgDataUrl(obj.name || `Object ${obj.id}`),
+                iconPath: createLabelSvgDataUrl(getObjectLabel(obj)),
                 position: {
                   x: posData.position.x,
                   y: posData.position.y,
@@ -643,9 +687,23 @@ async function toggleLabels() {
   }
 }
 
+// ── Build a descriptive label for an object ──
+function getObjectLabel(obj) {
+  // Priority: name > assembly > type/ifcClass > fallback
+  let label = obj.name || "";
+  // If name is generic ("Object 123"), try better alternatives
+  if (!label || /^Object \d+$/.test(label)) {
+    if (obj.assembly) label = obj.assembly;
+    else if (obj.type) label = obj.type;
+    else if (obj.ifcClass) label = obj.ifcClass;
+    else label = `Object ${obj.id}`;
+  }
+  return label;
+}
+
 // ── Create SVG label as data URL ──
 function createLabelSvgDataUrl(text) {
-  const shortText = text.length > 25 ? text.substring(0, 22) + "..." : text;
+  const shortText = text.length > 30 ? text.substring(0, 27) + "..." : text;
   const width = Math.max(120, shortText.length * 8 + 20);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="32">
     <defs>
@@ -669,10 +727,13 @@ async function resetAll() {
   selectedIds.clear();
   isolateActive = false;
   labelsVisible = false;
+  highlightActive = false;
   currentLabelIcons = [];
+  lastClickedItem = null;
 
   document.getElementById("btn-isolate").classList.remove("active");
   document.getElementById("btn-show-labels").classList.remove("active");
+  document.getElementById("btn-highlight").classList.remove("active");
 
   try {
     // Clear selection
@@ -690,6 +751,7 @@ async function resetAll() {
   } catch (e) { /* ignore */ }
 
   updateSummary();
+  notifySelectionChanged();
   renderTree();
   console.log("[ObjectExplorer] Reset complete");
 }
@@ -738,4 +800,11 @@ function escXml(str) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
+}
+
+// ── Notify statistics module of selection change ──
+function notifySelectionChanged() {
+  window.dispatchEvent(new CustomEvent("selection-changed", {
+    detail: { selectedIds: Array.from(selectedIds), count: selectedIds.size }
+  }));
 }
