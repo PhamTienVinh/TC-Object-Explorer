@@ -20,6 +20,25 @@ let lastClickAction = "select"; // "select" or "deselect" — for Shift range
 let isSyncingFromViewer = false; // flag to prevent re-entry during sync
 let lastViewerSelectionKey = ''; // dedup key for polling
 
+// IFC classes that are NOT 3D objects — exclude from panel and statistics
+const IFC_EXCLUDED_CLASSES = new Set([
+  'IfcProject', 'IfcSite', 'IfcBuilding', 'IfcBuildingStorey',
+  'IfcSpace', 'IfcZone', 'IfcGroup', 'IfcSystem',
+  'IfcGrid', 'IfcGridAxis', 'IfcGridPlacement',
+  'IfcAnnotation', 'IfcTextLiteral', 'IfcAnnotationFillArea',
+  'IfcRelAggregates', 'IfcRelContainedInSpatialStructure',
+  'IfcRelDefinesByType', 'IfcRelDefinesByProperties',
+  'IfcRelAssociatesMaterial', 'IfcRelConnectsPathElements',
+  'IfcRelSpaceBoundary', 'IfcRelVoidsElement',
+  'IfcOwnerHistory', 'IfcApplication', 'IfcOrganization',
+  'IfcGeometricRepresentationContext', 'IfcCartesianPoint',
+  'IfcDirection', 'IfcAxis2Placement3D', 'IfcLocalPlacement',
+  'IfcPropertySet', 'IfcPropertySingleValue',
+  'IfcUnitAssignment', 'IfcSIUnit', 'IfcDimensionalExponents',
+  'IfcMaterial', 'IfcMaterialLayer', 'IfcMaterialLayerSet',
+  'IfcElementAssembly', // parent assembly node, not a 3D geometry
+]);
+
 // ── Init ──
 export function initObjectExplorer(api, viewer) {
   apiRef = api;
@@ -161,7 +180,21 @@ async function scanObjects() {
       }
     }
 
-    console.log(`[ObjectExplorer] Scanned ${allObjects.length} objects`);
+    console.log(`[ObjectExplorer] Raw scanned ${allObjects.length} objects`);
+
+    // Filter out non-3D objects (levels, grids, sites, buildings, etc.)
+    const beforeFilter = allObjects.length;
+    allObjects = allObjects.filter(obj => {
+      // Exclude by IFC class
+      if (obj.ifcClass && IFC_EXCLUDED_CLASSES.has(obj.ifcClass)) return false;
+      // Exclude generic non-geometry names
+      const nameLower = (obj.name || '').toLowerCase();
+      if (nameLower.startsWith('level ') || nameLower.startsWith('grid ') || nameLower === 'model group') return false;
+      // Exclude objects with no meaningful data (no name, no volume, no weight, no profile)
+      if (!obj.name && !obj.profile && obj.volume === 0 && obj.weight === 0 && obj.area === 0) return false;
+      return true;
+    });
+    console.log(`[ObjectExplorer] Filtered: ${beforeFilter} → ${allObjects.length} 3D objects`);
 
     filteredObjects = [...allObjects];
     selectedIds.clear();
@@ -255,11 +288,18 @@ function parseObjectProperties(props, modelId) {
         result.name = String(propValue || "");
       }
 
-      // Assembly
-      if (propName === "assembly" || propName === "assemblycode" || propName === "assembly code"
-          || propName === "assembly mark" || propName === "assemblymark"
-          || propName === "assembly_mark") {
-        if (!result.assembly) result.assembly = String(propValue || "");
+      // Assembly (including Tekla-specific property names)
+      if (propName === 'assembly' || propName === 'assemblycode' || propName === 'assembly code'
+          || propName === 'assembly mark' || propName === 'assemblymark'
+          || propName === 'assembly_mark' || propName === 'assembly_pos'
+          || propName === 'assemblypos' || propName === 'assembly pos'
+          || propName === 'assembly_name' || propName === 'assemblyname'
+          || propName === 'assembly name' || propName === 'tekla assembly mark'
+          || propName === 'tekla_assembly' || propName === 'mainmark'
+          || propName === 'main mark' || propName === 'part_pos'
+          || propName === 'partpos' || propName === 'part pos'
+          || propName === 'preliminary mark' || propName === 'preliminarymark') {
+        if (!result.assembly) result.assembly = String(propValue || '');
       }
 
       // Group
