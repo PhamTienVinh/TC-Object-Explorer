@@ -50,20 +50,30 @@
             <option value="group">Group</option>
             <option value="type">IFC Type</option>
             <option value="material">Vật liệu</option>
+            <option value="source">Nguồn (Tekla)</option>
           </select>
         </div>
       </div>
 
       <!-- Action Bar -->
       <div class="action-bar" id="objects-action-bar">
+        <button id="btn-select-assembly" class="action-btn info" title="Chọn toàn bộ assembly chứa object đang chọn">
+          <span>🏗️</span> Select Assembly
+        </button>
         <button id="btn-isolate" class="action-btn warning" title="Chỉ hiển thị đối tượng đã chọn">
           <span>👁️</span> Isolate
         </button>
-        <button id="btn-reset" class="action-btn secondary" title="Reset selection & view">
+        <button id="btn-reset" class="action-btn secondary" title="Reset selection &amp; view">
           <span>🔄</span> Reset
         </button>
         <button id="btn-refresh" class="action-btn secondary" title="Quét lại objects">
           <span>♻️</span> Refresh
+        </button>
+        <button id="btn-collapse-all" class="action-btn secondary" title="Thu gọn tất cả nhóm">
+          <span>⏫</span> Thu gọn
+        </button>
+        <button id="btn-expand-all" class="action-btn secondary" title="Mở rộng tất cả nhóm">
+          <span>⏬</span> Mở rộng
         </button>
       </div>
 
@@ -103,6 +113,7 @@
             <option value="name">Tên</option>
             <option value="group">Group</option>
             <option value="material">Vật liệu</option>
+            <option value="source">Nguồn (Tekla)</option>
           </select>
         </div>
         <div class="control-row">

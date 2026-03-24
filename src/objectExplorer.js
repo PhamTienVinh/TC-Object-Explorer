@@ -70,6 +70,15 @@ export function initObjectExplorer(api, viewer) {
     .addEventListener("click", toggleIsolate);
   document.getElementById("btn-reset").addEventListener("click", resetAll);
   document.getElementById("btn-refresh").addEventListener("click", scanObjects);
+  document
+    .getElementById("btn-select-assembly")
+    .addEventListener("click", selectAssembly);
+  document
+    .getElementById("btn-collapse-all")
+    .addEventListener("click", collapseAll);
+  document
+    .getElementById("btn-expand-all")
+    .addEventListener("click", expandAll);
 }
 
 // ── Export data for statistics module ──
@@ -279,6 +288,7 @@ function parseObjectProperties(props, modelId) {
     length: 0,
     profile: "",
     ifcClass: props.class || "",
+    isTekla: false,
   };
 
   // Product info (standardized)
@@ -298,6 +308,18 @@ function parseObjectProperties(props, modelId) {
     const setName = (pSet.name || "").toLowerCase();
     const properties = pSet.properties || [];
 
+    // Detect Tekla Structures origin by property set name
+    if (
+      setName.includes("tekla") ||
+      setName === "teklaquantity" ||
+      setName === "teklacommon" ||
+      setName === "tekla common" ||
+      setName === "tekla_bim" ||
+      setName === "tekla quantity"
+    ) {
+      result.isTekla = true;
+    }
+
     for (const prop of properties) {
       const propName = (prop.name || "").toLowerCase();
       const propValue = prop.value;
@@ -308,31 +330,37 @@ function parseObjectProperties(props, modelId) {
         result.name = String(propValue || "");
       }
 
-      // Assembly (including Tekla-specific property names)
-      if (
-        propName === "assembly" ||
-        propName === "assemblycode" ||
-        propName === "assembly code" ||
-        propName === "assembly mark" ||
-        propName === "assemblymark" ||
-        propName === "assembly_mark" ||
-        propName === "assembly_pos" ||
-        propName === "assemblypos" ||
-        propName === "assembly pos" ||
-        propName === "assembly_name" ||
-        propName === "assemblyname" ||
-        propName === "assembly name" ||
-        propName === "tekla assembly mark" ||
-        propName === "tekla_assembly" ||
-        propName === "mainmark" ||
-        propName === "main mark" ||
-        propName === "part_pos" ||
-        propName === "partpos" ||
-        propName === "part pos" ||
-        propName === "preliminary mark" ||
-        propName === "preliminarymark"
-      ) {
-        if (!result.assembly) result.assembly = String(propValue || "");
+      // Assembly — priority-based: higher priority overwrites lower
+      // Priority 3 (highest): Tekla-specific assembly mark
+      const asmPriority3 = [
+        "assembly mark", "assemblymark", "assembly_mark",
+        "tekla assembly mark", "tekla_assembly",
+        "mainmark", "main mark"
+      ];
+      // Priority 2: Assembly position/name
+      const asmPriority2 = [
+        "assembly_pos", "assemblypos", "assembly pos",
+        "assembly_name", "assemblyname", "assembly name"
+      ];
+      // Priority 1 (lowest): Generic assembly / other
+      const asmPriority1 = [
+        "assembly", "assemblycode", "assembly code",
+        "part_pos", "partpos", "part pos",
+        "preliminary mark", "preliminarymark"
+      ];
+
+      const asmVal = String(propValue || "").trim();
+      if (asmVal) {
+        if (asmPriority3.includes(propName)) {
+          result.assembly = asmVal;
+          result._asmPriority = 3;
+        } else if (asmPriority2.includes(propName) && (result._asmPriority || 0) < 2) {
+          result.assembly = asmVal;
+          result._asmPriority = 2;
+        } else if (asmPriority1.includes(propName) && (result._asmPriority || 0) < 1) {
+          result.assembly = asmVal;
+          result._asmPriority = 1;
+        }
       }
 
       // Group
@@ -426,6 +454,22 @@ function parseObjectProperties(props, modelId) {
         if (!result.profile) result.profile = String(propValue || "");
       }
 
+      // Detect Tekla via specific property names
+      if (
+        propName === "assembly_pos" ||
+        propName === "assemblypos" ||
+        propName === "main_part" ||
+        propName === "mainpart" ||
+        propName === "phase" ||
+        propName === "tekla assembly mark" ||
+        propName === "tekla_assembly" ||
+        propName === "class" ||
+        propName === "preliminarymark" ||
+        propName === "preliminary mark"
+      ) {
+        result.isTekla = true;
+      }
+
       // Type from property
       if (
         !result.type &&
@@ -438,6 +482,17 @@ function parseObjectProperties(props, modelId) {
       }
     }
   }
+
+  // Fallback: use product description as assembly if still empty
+  if (!result.assembly && props.product && props.product.description) {
+    const desc = props.product.description.trim();
+    if (desc && desc !== result.name) {
+      result.assembly = desc;
+    }
+  }
+
+  // Clean up internal priority tracker
+  delete result._asmPriority;
 
   // Fallback name
   if (!result.name) result.name = `Object ${props.id}`;
@@ -511,11 +566,17 @@ function renderTree() {
   let html = "";
   for (const key of sortedKeys) {
     const items = groups[key];
+    // Check if all items in group are selected
+    const allGroupUids = items.map((o) => `${o.modelId}:${o.id}`);
+    const allChecked = allGroupUids.every((uid) => selectedIds.has(uid));
+    const someChecked = allGroupUids.some((uid) => selectedIds.has(uid));
+
     html += `<div class="tree-group" data-group="${escHtml(key)}">`;
-    html += `<div class="tree-group-header" onclick="this.parentElement.classList.toggle('collapsed')">`;
-    html += `<span class="tree-toggle">▼</span>`;
-    html += `<span class="tree-group-name">${escHtml(key)}</span>`;
-    html += `<span class="tree-group-count">${items.length}</span>`;
+    html += `<div class="tree-group-header">`;
+    html += `<input type="checkbox" class="tree-group-checkbox" ${allChecked ? "checked" : ""} ${!allChecked && someChecked ? 'data-indeterminate="true"' : ""} title="Chọn/bỏ chọn nhóm" />`;
+    html += `<span class="tree-toggle" onclick="this.closest('.tree-group').classList.toggle('collapsed')">▼</span>`;
+    html += `<span class="tree-group-name" onclick="this.closest('.tree-group').classList.toggle('collapsed')">${escHtml(key)}</span>`;
+    html += `<span class="tree-group-count" onclick="this.closest('.tree-group').classList.toggle('collapsed')">${items.length}</span>`;
     html += `</div>`;
     html += `<div class="tree-items">`;
 
@@ -527,6 +588,9 @@ function renderTree() {
       html += `<div class="tree-item${isSelected ? " selected" : ""}" data-uid="${escHtml(uid)}" data-model-id="${escHtml(obj.modelId)}" data-object-id="${obj.id}">`;
       html += `<input type="checkbox" class="tree-item-checkbox" ${isSelected ? "checked" : ""} />`;
       html += `<span class="tree-item-name" title="${escHtml(tooltip)}">${escHtml(displayLabel)}</span>`;
+      if (obj.isTekla) {
+        html += `<span class="tree-item-badge tekla" title="Vẽ bằng Tekla Structures">🏗️</span>`;
+      }
       if (obj.profile) {
         html += `<span class="tree-item-badge profile">${escHtml(obj.profile)}</span>`;
       } else if (obj.type) {
@@ -541,6 +605,39 @@ function renderTree() {
   container.innerHTML = html;
   document.getElementById("groups-count").textContent =
     `${sortedKeys.length} nhóm`;
+
+  // Set indeterminate state for group checkboxes (can't set via HTML attribute)
+  container.querySelectorAll('.tree-group-checkbox[data-indeterminate="true"]').forEach((cb) => {
+    cb.indeterminate = true;
+  });
+
+  // Bind group checkbox events (select/deselect all items in group)
+  container.querySelectorAll(".tree-group-checkbox").forEach((groupCb) => {
+    groupCb.addEventListener("change", (e) => {
+      const groupEl = e.target.closest(".tree-group");
+      const items = groupEl.querySelectorAll(".tree-item");
+      const doSelect = e.target.checked;
+
+      items.forEach((item) => {
+        const uid = item.dataset.uid;
+        if (doSelect) {
+          selectedIds.add(uid);
+          item.classList.add("selected");
+          item.querySelector(".tree-item-checkbox").checked = true;
+        } else {
+          selectedIds.delete(uid);
+          item.classList.remove("selected");
+          item.querySelector(".tree-item-checkbox").checked = false;
+        }
+      });
+
+      groupCb.indeterminate = false;
+      updateSummary();
+      notifySelectionChanged();
+      applyHighlightColors();
+      syncSelectionToViewer();
+    });
+  });
 
   // Bind click events with Shift+click support (select AND deselect range)
   const allItems = Array.from(container.querySelectorAll(".tree-item"));
@@ -568,6 +665,7 @@ function renderTree() {
               item.querySelector(".tree-item-checkbox").checked = false;
             }
           }
+          updateGroupCheckboxStates();
           updateSummary();
           notifySelectionChanged();
           applyHighlightColors();
@@ -595,11 +693,28 @@ function renderTree() {
         lastClickAction = "deselect";
       }
       lastClickedItem = el;
+      updateGroupCheckboxStates();
       updateSummary();
       notifySelectionChanged();
       applyHighlightColors();
       syncSelectionToViewer();
     });
+  });
+}
+
+// ── Update group checkbox states after individual item changes ──
+function updateGroupCheckboxStates() {
+  document.querySelectorAll(".tree-group").forEach((groupEl) => {
+    const groupCb = groupEl.querySelector(".tree-group-checkbox");
+    if (!groupCb) return;
+    const items = groupEl.querySelectorAll(".tree-item");
+    const total = items.length;
+    let checked = 0;
+    items.forEach((item) => {
+      if (selectedIds.has(item.dataset.uid)) checked++;
+    });
+    groupCb.checked = checked === total;
+    groupCb.indeterminate = checked > 0 && checked < total;
   });
 }
 
@@ -613,10 +728,59 @@ function toggleSelection(uid, el) {
     el.classList.add("selected");
     el.querySelector(".tree-item-checkbox").checked = true;
   }
+  updateGroupCheckboxStates();
   updateSummary();
   notifySelectionChanged();
   applyHighlightColors();
   syncSelectionToViewer();
+}
+
+// ── Select Assembly — select all objects sharing the same assembly as the first selected object ──
+function selectAssembly() {
+  if (selectedIds.size === 0) return;
+
+  // Find the first selected object
+  const firstUid = selectedIds.values().next().value;
+  const firstObj = allObjects.find((o) => `${o.modelId}:${o.id}` === firstUid);
+  if (!firstObj || !firstObj.assembly) {
+    console.log("[ObjectExplorer] Selected object has no assembly");
+    return;
+  }
+
+  const targetAssembly = firstObj.assembly;
+  console.log(`[ObjectExplorer] Selecting all objects in assembly: ${targetAssembly}`);
+
+  // Select all objects with the same assembly
+  for (const obj of allObjects) {
+    if (obj.assembly === targetAssembly) {
+      selectedIds.add(`${obj.modelId}:${obj.id}`);
+    }
+  }
+
+  // Update tree UI
+  const treeItems = document.querySelectorAll(".tree-item");
+  for (const el of treeItems) {
+    const uid = el.dataset.uid;
+    const isSelected = selectedIds.has(uid);
+    el.classList.toggle("selected", isSelected);
+    const cb = el.querySelector(".tree-item-checkbox");
+    if (cb) cb.checked = isSelected;
+  }
+
+  updateGroupCheckboxStates();
+  updateSummary();
+  notifySelectionChanged();
+  applyHighlightColors();
+  syncSelectionToViewer();
+}
+
+// ── Collapse / Expand All Groups ──
+function collapseAll() {
+  document.querySelectorAll(".tree-group").forEach((g) => g.classList.add("collapsed"));
+}
+
+function expandAll() {
+  document.querySelectorAll(".tree-group").forEach((g) => g.classList.remove("collapsed"));
 }
 
 function getGroupKey(obj, groupBy) {
@@ -631,6 +795,8 @@ function getGroupKey(obj, groupBy) {
       return obj.type;
     case "material":
       return obj.material;
+    case "source":
+      return obj.isTekla ? "Tekla Structures" : "Khác";
     default:
       return obj.assembly;
   }

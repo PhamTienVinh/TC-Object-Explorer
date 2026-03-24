@@ -445,6 +445,14 @@ select:focus {
   background: var(--bg-hover);
 }
 
+.tree-group-checkbox {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
 .tree-toggle {
   font-size: 10px;
   color: var(--text-muted);
@@ -535,6 +543,14 @@ select:focus {
   background: rgba(88, 166, 255, 0.15);
   color: var(--accent);
   border: 1px solid var(--accent-dark);
+}
+
+.tree-item-badge.tekla {
+  background: rgba(0, 191, 165, 0.15);
+  color: #00bfa5;
+  border: 1px solid rgba(0, 191, 165, 0.4);
+  font-size: 11px;
+  padding: 0 4px;
 }
 
 /* ===== STAT CARDS ===== */
