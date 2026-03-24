@@ -20,6 +20,8 @@ let isolateActive = false;
 let searchTimeout = null;
 let lastClickedItem = null; // for Shift+click range selection
 let lastClickAction = "select"; // "select" or "deselect" — for Shift range
+let lastClickedGroupEl = null; // for Shift+click range selection on group headers
+let lastGroupClickAction = "select"; // "select" or "deselect" — for group Shift range
 let isSyncingFromViewer = false; // flag to prevent re-entry during sync
 let lastViewerSelectionKey = ""; // dedup key for polling
 
@@ -842,13 +844,61 @@ function renderTree() {
     cb.indeterminate = true;
   });
 
-  // Bind group checkbox events (select/deselect all items in group)
-  container.querySelectorAll(".tree-group-checkbox").forEach((groupCb) => {
-    groupCb.addEventListener("change", (e) => {
-      const groupEl = e.target.closest(".tree-group");
-      const items = groupEl.querySelectorAll(".tree-item");
-      const doSelect = e.target.checked;
+  // Bind group checkbox events (select/deselect all items in group) with Shift+click support
+  const allGroups = Array.from(container.querySelectorAll(".tree-group"));
+  allGroups.forEach((groupEl) => {
+    const groupCb = groupEl.querySelector(".tree-group-checkbox");
+    if (!groupCb) return;
 
+    // Use click instead of change to access shiftKey
+    groupCb.addEventListener("click", (e) => {
+      const doSelect = groupCb.checked;
+
+      if (e.shiftKey && lastClickedGroupEl !== null) {
+        // Shift+click: apply same action (select or deselect) to range of groups
+        const lastGroupIndex = allGroups.indexOf(lastClickedGroupEl);
+        const currentGroupIndex = allGroups.indexOf(groupEl);
+        if (lastGroupIndex >= 0 && currentGroupIndex >= 0) {
+          const start = Math.min(lastGroupIndex, currentGroupIndex);
+          const end = Math.max(lastGroupIndex, currentGroupIndex);
+          const shiftDoSelect = lastGroupClickAction === "select";
+
+          // Override the checkbox state to match the range action
+          groupCb.checked = shiftDoSelect;
+
+          for (let gi = start; gi <= end; gi++) {
+            const g = allGroups[gi];
+            const gCb = g.querySelector(".tree-group-checkbox");
+            const gItems = g.querySelectorAll(".tree-item");
+            if (gCb) {
+              gCb.checked = shiftDoSelect;
+              gCb.indeterminate = false;
+            }
+            gItems.forEach((item) => {
+              const uid = item.dataset.uid;
+              if (shiftDoSelect) {
+                selectedIds.add(uid);
+                item.classList.add("selected");
+                item.querySelector(".tree-item-checkbox").checked = true;
+              } else {
+                selectedIds.delete(uid);
+                item.classList.remove("selected");
+                item.querySelector(".tree-item-checkbox").checked = false;
+              }
+            });
+          }
+
+          updateSummary();
+          notifySelectionChanged();
+          applyHighlightColors();
+          syncSelectionToViewer();
+          // Don't update lastClickedGroupEl so further Shift+clicks extend from the same anchor
+          return;
+        }
+      }
+
+      // Normal click: select/deselect all items in this group
+      const items = groupEl.querySelectorAll(".tree-item");
       items.forEach((item) => {
         const uid = item.dataset.uid;
         if (doSelect) {
@@ -863,6 +913,8 @@ function renderTree() {
       });
 
       groupCb.indeterminate = false;
+      lastClickedGroupEl = groupEl;
+      lastGroupClickAction = doSelect ? "select" : "deselect";
       updateSummary();
       notifySelectionChanged();
       applyHighlightColors();
@@ -1430,6 +1482,7 @@ async function resetAll() {
   selectedIds.clear();
   isolateActive = false;
   lastClickedItem = null;
+  lastClickedGroupEl = null;
 
   const btnIsolate = document.getElementById("btn-isolate");
   if (btnIsolate) btnIsolate.classList.remove("active");
