@@ -1,5 +1,5 @@
 /**
- * steelStatistics.js — Volume, Weight, Area & Length Statistics with Grouping
+ * steelStatistics.js — Volume, Weight & Area Statistics with Grouping
  *
  * Computes per-object and grouped statistics for steel and all objects.
  * Integrates with objectExplorer for data and with excelExport for export.
@@ -68,13 +68,11 @@ function updateStatistics() {
   let totalVolume = 0;
   let totalWeight = 0;
   let totalArea = 0;
-  let totalLength = 0;
 
   const enriched = objects.map((obj) => {
     let vol = obj.volume || 0;
     let wt = obj.weight || 0;
     let area = obj.area || 0;
-    let len = obj.length || 0;
 
     // If weight is 0 but volume exists, calculate from density
     if (wt === 0 && vol > 0) {
@@ -84,9 +82,8 @@ function updateStatistics() {
     totalVolume += vol;
     totalWeight += wt;
     totalArea += area;
-    totalLength += len;
 
-    return { ...obj, volume: vol, weight: wt, area, length: len };
+    return { ...obj, volume: vol, weight: wt, area };
   });
 
   currentData = enriched;
@@ -96,20 +93,18 @@ function updateStatistics() {
   document.getElementById("stat-total-volume").textContent = formatVolume(totalVolume);
   document.getElementById("stat-total-weight").textContent = formatWeight(totalWeight);
   document.getElementById("stat-total-area").textContent = formatArea(totalArea);
-  document.getElementById("stat-total-length").textContent = formatLength(totalLength);
 
   // Group data
   const groups = {};
   for (const obj of enriched) {
     const key = getGroupKey(obj, groupBy) || "(Không xác định)";
     if (!groups[key]) {
-      groups[key] = { name: key, count: 0, volume: 0, weight: 0, area: 0, length: 0 };
+      groups[key] = { name: key, count: 0, volume: 0, weight: 0, area: 0 };
     }
     groups[key].count++;
     groups[key].volume += obj.volume;
     groups[key].weight += obj.weight;
     groups[key].area += obj.area;
-    groups[key].length += obj.length;
   }
 
   const sortedGroups = Object.values(groups).sort((a, b) => b.weight - a.weight);
@@ -117,14 +112,14 @@ function updateStatistics() {
   document.getElementById("stat-total-groups").textContent = formatNumber(sortedGroups.length);
 
   // Render table
-  renderStatsTable(sortedGroups, totalVolume, totalWeight, totalArea, totalLength);
+  renderStatsTable(sortedGroups, totalVolume, totalWeight, totalArea);
 
   // Hide placeholder
   document.getElementById("stats-placeholder").style.display = "none";
 }
 
 // ── Render Table ──
-function renderStatsTable(groups, totalVolume, totalWeight, totalArea, totalLength) {
+function renderStatsTable(groups, totalVolume, totalWeight, totalArea) {
   const tbody = document.getElementById("stats-table-body");
   const tfoot = document.getElementById("stats-table-footer");
 
@@ -135,7 +130,6 @@ function renderStatsTable(groups, totalVolume, totalWeight, totalArea, totalLeng
     bodyHtml += `<td>${formatNumber(g.count)}</td>`;
     bodyHtml += `<td>${formatVolume(g.volume)}</td>`;
     bodyHtml += `<td>${formatArea(g.area)}</td>`;
-    bodyHtml += `<td>${formatLength(g.length)}</td>`;
     bodyHtml += `<td>${formatWeight(g.weight)}</td>`;
     bodyHtml += `</tr>`;
   }
@@ -147,7 +141,6 @@ function renderStatsTable(groups, totalVolume, totalWeight, totalArea, totalLeng
       <td>${formatNumber(groups.reduce((s, g) => s + g.count, 0))}</td>
       <td>${formatVolume(totalVolume)}</td>
       <td>${formatArea(totalArea)}</td>
-      <td>${formatLength(totalLength)}</td>
       <td>${formatWeight(totalWeight)}</td>
     </tr>
   `;
@@ -188,7 +181,6 @@ function clearStats() {
   document.getElementById("stat-total-volume").textContent = "0 m³";
   document.getElementById("stat-total-weight").textContent = "0 kg";
   document.getElementById("stat-total-area").textContent = "0 m²";
-  document.getElementById("stat-total-length").textContent = "0 m";
   document.getElementById("stat-total-groups").textContent = "0";
   document.getElementById("stats-table-body").innerHTML = "";
   document.getElementById("stats-table-footer").innerHTML = "";
@@ -207,9 +199,6 @@ function formatArea(a) {
   return a.toFixed(4) + " m²";
 }
 
-function formatLength(l) {
-  return l.toFixed(3) + " m";
-}
 
 function formatWeight(w) {
   if (w >= 1000) return (w / 1000).toFixed(2) + " tấn";

@@ -513,7 +513,7 @@ async function applyHighlightColors() {
           objectRuntimeIds: ids,
         })),
       },
-      { color: { r: 88, g: 166, b: 255, a: 200 } }
+      { color: { r: 255, g: 220, b: 0, a: 220 } }
     );
 
     console.log(`[ObjectExplorer] Auto-highlighted ${selectedIds.size} objects`);
