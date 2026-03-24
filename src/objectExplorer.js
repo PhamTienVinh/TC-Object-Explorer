@@ -939,55 +939,88 @@ function toggleSelection(uid, el) {
   syncSelectionToViewer();
 }
 
-// ── Select Assembly — like Trimble Connect for Windows ──
-// Uses pre-built assembly hierarchy map from scan
+// ── Select Assembly — select all objects with same ASSEMBLY_POS ──
 function selectAssembly() {
-  if (selectedIds.size === 0) return;
+  // Debug Step 1: Check if anything is selected
+  if (selectedIds.size === 0) {
+    alert("[Select Assembly] Chưa chọn object nào!");
+    return;
+  }
 
   const firstUid = selectedIds.values().next().value;
-  console.log("[SelectAssembly] UID:", firstUid);
+  
+  // Debug Step 2: Show what UID looks like
+  const debugInfo = [];
+  debugInfo.push(`UID: ${firstUid}`);
+  debugInfo.push(`selectedIds count: ${selectedIds.size}`);
+  debugInfo.push(`allObjects count: ${allObjects.length}`);
+  debugInfo.push(`assemblyMap count: ${assemblyMembershipMap.size}`);
 
-  // Look up which assembly this object belongs to
-  const assemblyKey = assemblyMembershipMap.get(firstUid);
-  if (!assemblyKey) {
-    // Try with numeric ID matching
+  // Try to find the object in allObjects
+  let matchObj = null;
+  
+  // Method 1: exact UID match
+  matchObj = allObjects.find((o) => `${o.modelId}:${o.id}` === firstUid);
+  debugInfo.push(`Exact match: ${matchObj ? "YES" : "NO"}`);
+
+  // Method 2: numeric ID match
+  if (!matchObj) {
     const idx = firstUid.indexOf(":");
     if (idx > 0) {
       const modelId = firstUid.substring(0, idx);
       const objectId = parseInt(firstUid.substring(idx + 1));
-      // Search for this objectId in any assembly
-      for (const [asmKey, childSet] of assemblyChildrenMap.entries()) {
-        if (asmKey.startsWith(modelId + ":") && childSet.has(objectId)) {
-          // Found! Select all children of this assembly
-          console.log(`[SelectAssembly] Found in assembly ${asmKey} (${childSet.size} members)`);
-          for (const childId of childSet) {
-            const uid = `${modelId}:${childId}`;
-            selectedIds.add(uid);
-          }
-          updateTreeAndNotify();
-          return;
-        }
+      debugInfo.push(`Parsed: modelId=${modelId}, objectId=${objectId}`);
+      
+      // Try numeric match
+      matchObj = allObjects.find(o => o.modelId === modelId && o.id === objectId);
+      debugInfo.push(`Numeric match: ${matchObj ? "YES" : "NO"}`);
+      
+      // Try string match
+      if (!matchObj) {
+        matchObj = allObjects.find(o => o.modelId === modelId && String(o.id) === String(objectId));
+        debugInfo.push(`String match: ${matchObj ? "YES" : "NO"}`);
+      }
+
+      // Show sample allObjects IDs for comparison
+      const sampleObjs = allObjects.filter(o => o.modelId === modelId).slice(0, 3);
+      if (sampleObjs.length > 0) {
+        debugInfo.push(`Sample allObjects IDs: ${sampleObjs.map(o => `${typeof o.id}:${o.id}`).join(", ")}`);
       }
     }
-    console.log("[SelectAssembly] Object not in any assembly hierarchy");
+  }
+
+  if (!matchObj) {
+    alert("[Select Assembly] Object không tìm thấy trong allObjects!\n\n" + debugInfo.join("\n"));
     return;
   }
 
-  // Get all children of this assembly
-  const childSet = assemblyChildrenMap.get(assemblyKey);
-  if (!childSet || childSet.size === 0) {
-    console.log("[SelectAssembly] Assembly has no children:", assemblyKey);
+  debugInfo.push(`Object name: ${matchObj.name}`);
+  debugInfo.push(`assemblyPos: "${matchObj.assemblyPos || ""}"`);
+  debugInfo.push(`assemblyName: "${matchObj.assemblyName || ""}"`);
+  debugInfo.push(`assembly: "${matchObj.assembly || ""}"`);
+
+  // Find assembly key to use
+  const assemblyPos = matchObj.assemblyPos;
+  if (!assemblyPos) {
+    alert("[Select Assembly] Object không có ASSEMBLY_POS!\n\n" + debugInfo.join("\n"));
     return;
   }
 
-  const idx2 = assemblyKey.indexOf(":");
-  const modelId = assemblyKey.substring(0, idx2);
-
-  console.log(`[SelectAssembly] Assembly ${assemblyKey}: selecting ${childSet.size} objects`);
-
-  for (const childId of childSet) {
-    selectedIds.add(`${modelId}:${childId}`);
+  // Count how many objects share this assemblyPos
+  let count = 0;
+  for (const obj of allObjects) {
+    if (obj.assemblyPos === assemblyPos) count++;
   }
+  debugInfo.push(`Objects with same ASSEMBLY_POS "${assemblyPos}": ${count}`);
+
+  // Select them
+  for (const obj of allObjects) {
+    if (obj.assemblyPos === assemblyPos) {
+      selectedIds.add(`${obj.modelId}:${obj.id}`);
+    }
+  }
+
+  alert("[Select Assembly] Đã chọn " + count + " objects!\n\n" + debugInfo.join("\n"));
 
   updateTreeAndNotify();
 }
