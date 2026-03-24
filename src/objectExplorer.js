@@ -872,67 +872,133 @@ function toggleSelection(uid, el) {
   syncSelectionToViewer();
 }
 
-// ── Select Assembly — select all objects with the SAME ASSEMBLY_POS as the selected object ──
-// Always matches by assemblyPos data field, never by DOM tree groups
-function selectAssembly() {
-  if (selectedIds.size === 0) return;
+// ── Select Assembly — like Trimble Connect for Windows ──
+// Uses IFC hierarchy API: walk UP to find parent IfcElementAssembly, then select all its children
+async function selectAssembly() {
+  if (selectedIds.size === 0 || !viewerRef) return;
 
   const firstUid = selectedIds.values().next().value;
-  console.log("[SelectAssembly] UID:", firstUid);
+  const idx = firstUid.indexOf(":");
+  if (idx <= 0) return;
 
-  // Try to find the object in allObjects by UID
-  let matchObj = allObjects.find((o) => `${o.modelId}:${o.id}` === firstUid);
+  const modelId = firstUid.substring(0, idx);
+  const objectId = parseInt(firstUid.substring(idx + 1));
+  if (isNaN(objectId)) return;
 
-  // If not found by exact UID, try parsing objectId and matching numerically
-  if (!matchObj) {
-    const idx = firstUid.indexOf(":");
-    if (idx > 0) {
-      const modelId = firstUid.substring(0, idx);
-      const objectId = parseInt(firstUid.substring(idx + 1));
-      if (!isNaN(objectId)) {
-        matchObj = allObjects.find(o => o.modelId === modelId && o.id === objectId);
-        if (!matchObj) matchObj = allObjects.find(o => o.modelId === modelId && String(o.id) === String(objectId));
+  console.log(`[SelectAssembly] Object: model=${modelId}, id=${objectId}`);
+
+  try {
+    // Step 1: Walk UP the hierarchy to find the nearest IfcElementAssembly parent
+    let assemblyParentId = null;
+    let currentId = objectId;
+
+    for (let depth = 0; depth < 10; depth++) {
+      try {
+        // Try getHierarchyParents first
+        const parents = await viewerRef.getHierarchyParents(modelId, [currentId]);
+        if (!parents || parents.length === 0) break;
+
+        const parent = parents[0];
+        const parentClass = (parent.class || "").toLowerCase();
+        console.log(`[SelectAssembly] Parent depth=${depth}: id=${parent.id}, class="${parent.class}", name="${parent.product?.name || ""}"`);
+
+        if (parentClass === "ifcelementassembly" || parentClass.includes("assembly")) {
+          assemblyParentId = parent.id;
+          console.log(`[SelectAssembly] Found assembly parent: id=${assemblyParentId}`);
+          break;
+        }
+
+        // Continue walking up
+        currentId = parent.id;
+      } catch (e) {
+        console.log(`[SelectAssembly] getHierarchyParents failed at depth ${depth}:`, e.message);
+        break;
       }
     }
-  }
 
-  if (!matchObj) {
-    console.log("[SelectAssembly] Object not found in allObjects");
-    return;
-  }
-
-  if (!matchObj.assemblyPos) {
-    console.log("[SelectAssembly] Object has no ASSEMBLY_POS:", matchObj.name);
-    return;
-  }
-
-  const targetPos = matchObj.assemblyPos;
-  console.log(`[SelectAssembly] ASSEMBLY_POS = "${targetPos}" (from object "${matchObj.name}")`);
-
-  // Select ONLY objects with the exact same assemblyPos
-  let count = 0;
-  for (const obj of allObjects) {
-    if (obj.assemblyPos === targetPos) {
-      selectedIds.add(`${obj.modelId}:${obj.id}`);
-      count++;
+    if (assemblyParentId === null) {
+      console.log("[SelectAssembly] No IfcElementAssembly parent found, trying getHierarchyChildren from object itself");
+      // Maybe the selected object IS the assembly? Try getting its children
+      try {
+        const children = await viewerRef.getHierarchyChildren(modelId, [objectId], 1, false);
+        if (children && children.length > 0) {
+          assemblyParentId = objectId;
+          console.log(`[SelectAssembly] Object itself might be assembly, ${children.length} children`);
+        }
+      } catch (e) { /* ignore */ }
     }
-  }
-  console.log(`[SelectAssembly] Selected ${count} objects with ASSEMBLY_POS="${targetPos}"`);
 
-  // Update tree UI
-  document.querySelectorAll(".tree-item").forEach((el) => {
-    if (selectedIds.has(el.dataset.uid)) {
-      el.classList.add("selected");
-      const cb = el.querySelector(".tree-item-checkbox");
-      if (cb) cb.checked = true;
+    if (assemblyParentId === null) {
+      console.log("[SelectAssembly] Could not find assembly container");
+      return;
     }
-  });
 
-  updateGroupCheckboxStates();
-  updateSummary();
-  notifySelectionChanged();
-  applyHighlightColors();
-  syncSelectionToViewer();
+    // Step 2: Get ALL children of the assembly parent
+    const children = await viewerRef.getHierarchyChildren(modelId, [assemblyParentId], 5, false);
+    if (!children || children.length === 0) {
+      console.log("[SelectAssembly] Assembly has no children");
+      return;
+    }
+
+    // Flatten children (may be nested)
+    const childIds = new Set();
+    function flattenIds(nodes) {
+      for (const node of nodes) {
+        childIds.add(node.id);
+        if (node.children && node.children.length > 0) {
+          flattenIds(node.children);
+        }
+      }
+    }
+    flattenIds(children);
+
+    // Also add the assembly parent itself
+    childIds.add(assemblyParentId);
+
+    console.log(`[SelectAssembly] Assembly ${assemblyParentId} has ${childIds.size} members`);
+
+    // Step 3: Select these objects in our panel
+    const matchedUids = new Set();
+    for (const cid of childIds) {
+      const uid = `${modelId}:${cid}`;
+      matchedUids.add(uid);
+    }
+
+    // Also match against allObjects by numeric ID
+    for (const obj of allObjects) {
+      if (obj.modelId === modelId && childIds.has(obj.id)) {
+        matchedUids.add(`${obj.modelId}:${obj.id}`);
+      }
+    }
+
+    // Add matched UIDs to selection
+    for (const uid of matchedUids) {
+      selectedIds.add(uid);
+    }
+
+    console.log(`[SelectAssembly] Selected ${matchedUids.size} objects in assembly`);
+
+    // Step 4: Update tree UI
+    document.querySelectorAll(".tree-item").forEach((el) => {
+      if (selectedIds.has(el.dataset.uid)) {
+        el.classList.add("selected");
+        const cb = el.querySelector(".tree-item-checkbox");
+        if (cb) cb.checked = true;
+      }
+    });
+
+    // Step 5: Also highlight in 3D viewer
+    await viewerRef.setSelection({
+      modelObjectIds: [{ modelId, objectRuntimeIds: Array.from(childIds) }]
+    }, "set");
+
+    updateGroupCheckboxStates();
+    updateSummary();
+    notifySelectionChanged();
+    applyHighlightColors();
+  } catch (e) {
+    console.error("[SelectAssembly] Failed:", e);
+  }
 }
 
 // ── Collapse / Expand All Groups ──
