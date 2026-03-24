@@ -23,6 +23,7 @@ let lastClickAction = "select"; // "select" or "deselect" — for Shift range
 let lastClickedGroupEl = null; // for Shift+click range selection on group headers
 let lastGroupClickAction = "select"; // "select" or "deselect" — for group Shift range
 let isSyncingFromViewer = false; // flag to prevent re-entry during sync
+let isPanelInitiated = false; // flag to prevent auto-scroll when selection comes from panel
 let lastViewerSelectionKey = ""; // dedup key for polling
 
 // ── Init ──
@@ -1228,6 +1229,7 @@ async function syncSelectionToViewer() {
   const modelMap = buildModelMap();
   try {
     isSyncingFromViewer = true;
+    isPanelInitiated = true; // prevent auto-scroll from echoed events
 
     if (selectedIds.size === 0) {
       await viewerRef.setSelection({ modelObjectIds: [] }, "set");
@@ -1249,6 +1251,10 @@ async function syncSelectionToViewer() {
     setTimeout(() => {
       isSyncingFromViewer = false;
     }, 200);
+    // Keep panel flag on longer to cover polling interval (2s)
+    setTimeout(() => {
+      isPanelInitiated = false;
+    }, 3000);
   }
 }
 
@@ -1450,10 +1456,12 @@ function handleViewerSelectionChanged(data) {
       }
     }
 
-    // Step 7: Scroll first selected item into view
-    const firstSel = document.querySelector(".tree-item.selected");
-    if (firstSel) {
-      firstSel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    // Step 7: Scroll first selected item into view (only if selection came from 3D viewer, not panel)
+    if (!isPanelInitiated) {
+      const firstSel = document.querySelector(".tree-item.selected");
+      if (firstSel) {
+        firstSel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
     }
 
     // Step 8: Update summary + statistics
