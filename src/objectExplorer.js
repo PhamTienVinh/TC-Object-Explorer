@@ -23,8 +23,8 @@ let lastClickAction = "select"; // "select" or "deselect" — for Shift range
 let lastClickedGroupEl = null; // for Shift+click range selection on group headers
 let lastGroupClickAction = "select"; // "select" or "deselect" — for group Shift range
 let isSyncingFromViewer = false; // flag to prevent re-entry during sync
-let isPanelInitiated = false; // flag to prevent auto-scroll when selection comes from panel
 let lastViewerSelectionKey = ""; // dedup key for polling
+let selectionFromPanel = false; // true when selection originates from panel click
 
 // ── Init ──
 export function initObjectExplorer(api, viewer) {
@@ -853,6 +853,8 @@ function renderTree() {
 
     // Use click instead of change to access shiftKey
     groupCb.addEventListener("click", (e) => {
+      const treeContainer = document.getElementById("object-tree");
+      const savedScroll = treeContainer.scrollTop;
       const doSelect = groupCb.checked;
 
       if (e.shiftKey && lastClickedGroupEl !== null) {
@@ -889,11 +891,12 @@ function renderTree() {
             });
           }
 
+          selectionFromPanel = true;
           updateSummary();
           notifySelectionChanged();
           applyHighlightColors();
           syncSelectionToViewer();
-          // Don't update lastClickedGroupEl so further Shift+clicks extend from the same anchor
+          treeContainer.scrollTop = savedScroll;
           return;
         }
       }
@@ -916,10 +919,12 @@ function renderTree() {
       groupCb.indeterminate = false;
       lastClickedGroupEl = groupEl;
       lastGroupClickAction = doSelect ? "select" : "deselect";
+      selectionFromPanel = true;
       updateSummary();
       notifySelectionChanged();
       applyHighlightColors();
       syncSelectionToViewer();
+      treeContainer.scrollTop = savedScroll;
     });
   });
 
@@ -928,6 +933,8 @@ function renderTree() {
   const allItems = Array.from(container.querySelectorAll(".tree-item"));
   allItems.forEach((el, index) => {
     el.addEventListener("click", (e) => {
+      const treeContainer = document.getElementById("object-tree");
+      const savedScroll = treeContainer.scrollTop;
       const isCheckboxClick = e.target.classList.contains("tree-item-checkbox");
 
       // ── Shift+click range selection ──
@@ -956,11 +963,13 @@ function renderTree() {
               item.querySelector(".tree-item-checkbox").checked = false;
             }
           }
+          selectionFromPanel = true;
           updateGroupCheckboxStates();
           updateSummary();
           notifySelectionChanged();
           applyHighlightColors();
           syncSelectionToViewer();
+          treeContainer.scrollTop = savedScroll;
           return;
         }
       }
@@ -980,16 +989,20 @@ function renderTree() {
           el.classList.remove("selected");
         }
         lastClickedItem = el;
+        selectionFromPanel = true;
         updateGroupCheckboxStates();
         updateSummary();
         notifySelectionChanged();
         applyHighlightColors();
         syncSelectionToViewer();
+        treeContainer.scrollTop = savedScroll;
       } else {
         // Click on row text — toggle selection
+        selectionFromPanel = true;
         lastClickAction = selectedIds.has(uid) ? "deselect" : "select";
         toggleSelection(uid, el);
         lastClickedItem = el;
+        treeContainer.scrollTop = savedScroll;
       }
     });
   });
@@ -1229,7 +1242,6 @@ async function syncSelectionToViewer() {
   const modelMap = buildModelMap();
   try {
     isSyncingFromViewer = true;
-    isPanelInitiated = true; // prevent auto-scroll from echoed events
 
     if (selectedIds.size === 0) {
       await viewerRef.setSelection({ modelObjectIds: [] }, "set");
@@ -1251,9 +1263,9 @@ async function syncSelectionToViewer() {
     setTimeout(() => {
       isSyncingFromViewer = false;
     }, 200);
-    // Keep panel flag on longer to cover polling interval (2s)
+    // Clear panel flag after polling interval
     setTimeout(() => {
-      isPanelInitiated = false;
+      selectionFromPanel = false;
     }, 3000);
   }
 }
@@ -1456,8 +1468,8 @@ function handleViewerSelectionChanged(data) {
       }
     }
 
-    // Step 7: Scroll first selected item into view (only if selection came from 3D viewer, not panel)
-    if (!isPanelInitiated) {
+    // Step 7: Scroll first selected item into view (only if selection came from 3D viewer click)
+    if (!selectionFromPanel) {
       const firstSel = document.querySelector(".tree-item.selected");
       if (firstSel) {
         firstSel.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -1465,9 +1477,13 @@ function handleViewerSelectionChanged(data) {
     }
 
     // Step 8: Update summary + statistics
+    const treeContainer = document.getElementById("object-tree");
+    const savedScroll = treeContainer.scrollTop;
     updateSummary();
     notifySelectionChanged();
     applyHighlightColors();
+    // Restore scroll position to prevent any layout shift
+    treeContainer.scrollTop = savedScroll;
   } catch (e) {
     console.warn("[ObjectExplorer] Viewer selection sync error:", e);
   }
