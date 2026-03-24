@@ -872,63 +872,60 @@ function toggleSelection(uid, el) {
   syncSelectionToViewer();
 }
 
-// ── Select Assembly — select all objects with the SAME ASSEMBLY_POS as the first selected object ──
+// ── Select Assembly — select all objects in the SAME TREE GROUP as the first selected object ──
+// Uses the rendered tree DOM to find the group, which is always correct since grouping already works
 function selectAssembly() {
   if (selectedIds.size === 0) return;
 
-  // Find the first selected object
   const firstUid = selectedIds.values().next().value;
-  const firstObj = allObjects.find((o) => `${o.modelId}:${o.id}` === firstUid);
-  if (!firstObj) {
-    console.log("[ObjectExplorer] No matching object found for uid:", firstUid);
-    return;
-  }
+  console.log("[SelectAssembly] Starting with uid:", firstUid);
 
-  console.log("[SelectAssembly] First object:", firstObj.name,
-    "| assemblyPos:", firstObj.assemblyPos,
-    "| assemblyName:", firstObj.assemblyName,
-    "| assembly:", firstObj.assembly,
-    "| volume:", firstObj.volume);
+  // Strategy 1: DOM-based — find the tree-group containing this item
+  const selectedEl = document.querySelector(`.tree-item[data-uid="${firstUid}"]`);
+  if (selectedEl) {
+    const groupEl = selectedEl.closest(".tree-group");
+    if (groupEl) {
+      const groupName = groupEl.dataset.group || "unknown";
+      console.log(`[SelectAssembly] Found DOM group: "${groupName}"`);
 
-  // Determine matching key with fallback chain
-  let matchKey = "";
-  let matchField = "";
-  if (firstObj.assemblyPos) {
-    matchKey = firstObj.assemblyPos;
-    matchField = "assemblyPos";
-  } else if (firstObj.assemblyName) {
-    matchKey = firstObj.assemblyName;
-    matchField = "assemblyName";
-  } else if (firstObj.assemblyInstanceId) {
-    matchKey = firstObj.assemblyInstanceId;
-    matchField = "assemblyInstanceId";
-  } else if (firstObj.assembly) {
-    matchKey = firstObj.assembly;
-    matchField = "assembly";
-  }
-
-  if (!matchKey) {
-    console.log("[SelectAssembly] No assembly info found");
-    return;
-  }
-
-  console.log(`[SelectAssembly] Matching by ${matchField} = "${matchKey}"`);
-
-  // Select all objects matching the same key
-  let count = 0;
-  let totalVol = 0;
-  for (const obj of allObjects) {
-    if (obj[matchField] === matchKey) {
-      const uid = `${obj.modelId}:${obj.id}`;
-      selectedIds.add(uid);
-      totalVol += obj.volume || 0;
-      count++;
-      if (count <= 5) {
-        console.log(`[SelectAssembly]   Part: "${obj.name}" volume=${obj.volume} weight=${obj.weight} uid=${uid}`);
+      // Select all items in this group
+      const groupItems = groupEl.querySelectorAll(".tree-item");
+      let count = 0;
+      for (const item of groupItems) {
+        const uid = item.dataset.uid;
+        if (uid) {
+          selectedIds.add(uid);
+          item.classList.add("selected");
+          const cb = item.querySelector(".tree-item-checkbox");
+          if (cb) cb.checked = true;
+          count++;
+        }
       }
+      console.log(`[SelectAssembly] Selected ${count} objects in group "${groupName}"`);
+
+      updateGroupCheckboxStates();
+      updateSummary();
+      notifySelectionChanged();
+      applyHighlightColors();
+      syncSelectionToViewer();
+      return;
     }
   }
-  console.log(`[SelectAssembly] Total: ${count} objects, volume=${totalVol}`);
+
+  // Strategy 2: Data-based fallback — match by current groupBy key
+  console.log("[SelectAssembly] DOM strategy failed, trying data fallback");
+  const firstObj = allObjects.find((o) => `${o.modelId}:${o.id}` === firstUid);
+  if (!firstObj) return;
+
+  const groupBy = document.getElementById("group-by-select").value;
+  const targetKey = getGroupKey(firstObj, groupBy);
+  console.log(`[SelectAssembly] Fallback: groupBy="${groupBy}", key="${targetKey}"`);
+
+  for (const obj of allObjects) {
+    if (getGroupKey(obj, groupBy) === targetKey) {
+      selectedIds.add(`${obj.modelId}:${obj.id}`);
+    }
+  }
 
   // Update tree UI
   const treeItems = document.querySelectorAll(".tree-item");
