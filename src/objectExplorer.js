@@ -164,30 +164,10 @@ async function scanObjects() {
 
     console.log(`[ObjectExplorer] Raw scanned ${allObjects.length} objects`);
 
-    // Filter: exclude non-3D Revit objects (only if they have NO physical data)
-    const NON_3D_KEYWORDS = ['ifcsite', 'ifcbuilding', 'ifcproject', 'ifcbuildingstorey',
-      'ifcgrid', 'ifcgridaxis', 'ifcspace', 'ifczone', 'ifcgroup',
-      'ifcannotation', 'ifcelementassembly'];
-    const NON_3D_NAMES = ['level', 'grid', 'model group', 'modelgroup', 'datum'];
-    
+    // Filter: exclude objects with no physical data (volume, weight, area all = 0)
     const beforeFilter = allObjects.length;
-    allObjects = allObjects.filter(obj => {
-      const hasPhysicalData = obj.volume > 0 || obj.weight > 0 || obj.area > 0 || !!obj.profile;
-      // If it has physical data, always keep it (it's a real 3D object)
-      if (hasPhysicalData) return true;
-
-      const cls = (obj.ifcClass || '').toLowerCase();
-      const name = (obj.name || '').toLowerCase();
-
-      // Exclude if class matches non-3D keyword AND no physical data
-      if (cls && NON_3D_KEYWORDS.some(k => cls === k)) return false;
-
-      // Exclude by name if starts with non-3D keyword AND no physical data
-      if (name && NON_3D_NAMES.some(k => name === k || name.startsWith(k + ' ') || name.startsWith(k + ':'))) return false;
-
-      return true;
-    });
-    console.log(`[ObjectExplorer] Filtered: ${beforeFilter} → ${allObjects.length} objects`);
+    allObjects = allObjects.filter(obj => obj.volume > 0 || obj.weight > 0 || obj.area > 0);
+    console.log(`[ObjectExplorer] Filtered: ${beforeFilter} → ${allObjects.length} objects (removed ${beforeFilter - allObjects.length} non-3D)`);
 
     filteredObjects = [...allObjects];
     selectedIds.clear();
