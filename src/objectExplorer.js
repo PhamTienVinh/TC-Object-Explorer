@@ -421,6 +421,7 @@ function parseObjectProperties(props, modelId) {
     profile: "",
     ifcClass: props.class || "",
     isTekla: false,
+    rawProperties: [], // [{pset, name, value}] for debug/export
   };
 
   // Product info (standardized)
@@ -495,6 +496,9 @@ function parseObjectProperties(props, modelId) {
       if (asmVal) {
         // Normalize: remove spaces, underscores, dots, hyphens → compare
         const normalized = propName.replace(/[\s_.\-]/g, "");
+
+        // Store raw property for debug/export
+        result.rawProperties.push({ pset: pSet.name || "", name: rawPropName, value: asmVal });
 
         // Debug: log any property that contains "assembly" (first 5 objects)
         if (!window._asmDebugCount) window._asmDebugCount = 0;
