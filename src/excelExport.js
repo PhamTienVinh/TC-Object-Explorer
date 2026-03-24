@@ -30,11 +30,12 @@ export function exportToExcel(data, groupBy, selectedOnly) {
   for (const obj of data) {
     const key = getGroupKey(obj, groupBy) || "(Không xác định)";
     if (!groups[key]) {
-      groups[key] = { count: 0, volume: 0, weight: 0 };
+      groups[key] = { count: 0, volume: 0, weight: 0, area: 0 };
     }
     groups[key].count++;
     groups[key].volume += obj.volume || 0;
     groups[key].weight += obj.weight || 0;
+    groups[key].area += obj.area || 0;
   }
 
   const summaryHeader = [
@@ -159,11 +160,12 @@ function createGroupSheet(data, groupBy, label) {
   for (const obj of data) {
     const key = getGroupKey(obj, groupBy) || "(Không xác định)";
     if (!groups[key]) {
-      groups[key] = { count: 0, volume: 0, weight: 0, items: [] };
+      groups[key] = { count: 0, volume: 0, weight: 0, area: 0, items: [] };
     }
     groups[key].count++;
     groups[key].volume += obj.volume || 0;
     groups[key].weight += obj.weight || 0;
+    groups[key].area += obj.area || 0;
     groups[key].items.push(obj);
   }
 
