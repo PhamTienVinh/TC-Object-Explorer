@@ -13,6 +13,9 @@ let viewerRef = null;
 let allObjects = []; // { id, modelId, name, assembly, group, type, material, volume, weight, area, length, profile, class }
 let filteredObjects = [];
 let selectedIds = new Set(); // Set of "modelId:objectId"
+// Assembly hierarchy maps (built during scan)
+let assemblyMembershipMap = new Map(); // "modelId:objectId" -> "modelId:assemblyParentId"
+let assemblyChildrenMap = new Map(); // "modelId:assemblyParentId" -> Set([objectId1, objectId2, ...])
 let isolateActive = false;
 let searchTimeout = null;
 let lastClickedItem = null; // for Shift+click range selection
@@ -240,6 +243,9 @@ async function scanObjects() {
     // Assign assembly instances via Tekla properties (ASSEMBLY_POS)
     assignAssemblyInstances();
 
+    // Build IFC hierarchy-based assembly map
+    await buildAssemblyHierarchyMap(models);
+
     // Build display names for assembly groups  
     buildAssemblyDisplayNames();
 
@@ -316,6 +322,67 @@ function assignAssemblyInstances() {
 
   const uniqueInstances = new Set(allObjects.filter(o => o.assemblyInstanceId).map(o => o.assemblyInstanceId));
   console.log(`[ObjectExplorer] Assigned ${uniqueInstances.size} assembly instances`);
+}
+
+// ── Build Assembly Hierarchy Map ──
+// Walks the IFC hierarchy to find IfcElementAssembly nodes and maps children → parent
+async function buildAssemblyHierarchyMap(models) {
+  assemblyMembershipMap.clear();
+  assemblyChildrenMap.clear();
+
+  if (!viewerRef || !models || models.length === 0) return;
+
+  for (const model of models) {
+    const modelId = model.id || model;
+    try {
+      // Get the full hierarchy tree (depth=10 to get deep nesting)
+      const rootNodes = await viewerRef.getHierarchyChildren(modelId, [0], 10, true);
+      if (!rootNodes || rootNodes.length === 0) continue;
+
+      // Recursively walk the tree to find IfcElementAssembly nodes
+      function walkTree(nodes) {
+        for (const node of nodes) {
+          const nodeClass = (node.class || "").toLowerCase();
+
+          if (nodeClass === "ifcelementassembly" || nodeClass.includes("elementassembly")) {
+            // This is an assembly node - collect all its children
+            const assemblyKey = `${modelId}:${node.id}`;
+            const childSet = new Set();
+
+            function collectChildren(childNodes) {
+              if (!childNodes) return;
+              for (const child of childNodes) {
+                childSet.add(child.id);
+                assemblyMembershipMap.set(`${modelId}:${child.id}`, assemblyKey);
+                if (child.children && child.children.length > 0) {
+                  collectChildren(child.children);
+                }
+              }
+            }
+
+            if (node.children && node.children.length > 0) {
+              collectChildren(node.children);
+            }
+
+            assemblyChildrenMap.set(assemblyKey, childSet);
+            // Also map the assembly node itself
+            assemblyMembershipMap.set(`${modelId}:${node.id}`, assemblyKey);
+          }
+
+          // Continue walking into children (even non-assembly nodes may contain assemblies)
+          if (node.children && node.children.length > 0) {
+            walkTree(node.children);
+          }
+        }
+      }
+
+      walkTree(rootNodes);
+    } catch (e) {
+      console.warn(`[ObjectExplorer] buildAssemblyHierarchyMap failed for ${modelId}:`, e);
+    }
+  }
+
+  console.log(`[ObjectExplorer] Assembly hierarchy: ${assemblyChildrenMap.size} assemblies, ${assemblyMembershipMap.size} mapped objects`);
 }
 
 // Build human-readable display names for assembly groups
@@ -873,132 +940,71 @@ function toggleSelection(uid, el) {
 }
 
 // ── Select Assembly — like Trimble Connect for Windows ──
-// Uses IFC hierarchy API: walk UP to find parent IfcElementAssembly, then select all its children
-async function selectAssembly() {
-  if (selectedIds.size === 0 || !viewerRef) return;
+// Uses pre-built assembly hierarchy map from scan
+function selectAssembly() {
+  if (selectedIds.size === 0) return;
 
   const firstUid = selectedIds.values().next().value;
-  const idx = firstUid.indexOf(":");
-  if (idx <= 0) return;
+  console.log("[SelectAssembly] UID:", firstUid);
 
-  const modelId = firstUid.substring(0, idx);
-  const objectId = parseInt(firstUid.substring(idx + 1));
-  if (isNaN(objectId)) return;
-
-  console.log(`[SelectAssembly] Object: model=${modelId}, id=${objectId}`);
-
-  try {
-    // Step 1: Walk UP the hierarchy to find the nearest IfcElementAssembly parent
-    let assemblyParentId = null;
-    let currentId = objectId;
-
-    for (let depth = 0; depth < 10; depth++) {
-      try {
-        // Try getHierarchyParents first
-        const parents = await viewerRef.getHierarchyParents(modelId, [currentId]);
-        if (!parents || parents.length === 0) break;
-
-        const parent = parents[0];
-        const parentClass = (parent.class || "").toLowerCase();
-        console.log(`[SelectAssembly] Parent depth=${depth}: id=${parent.id}, class="${parent.class}", name="${parent.product?.name || ""}"`);
-
-        if (parentClass === "ifcelementassembly" || parentClass.includes("assembly")) {
-          assemblyParentId = parent.id;
-          console.log(`[SelectAssembly] Found assembly parent: id=${assemblyParentId}`);
-          break;
-        }
-
-        // Continue walking up
-        currentId = parent.id;
-      } catch (e) {
-        console.log(`[SelectAssembly] getHierarchyParents failed at depth ${depth}:`, e.message);
-        break;
-      }
-    }
-
-    if (assemblyParentId === null) {
-      console.log("[SelectAssembly] No IfcElementAssembly parent found, trying getHierarchyChildren from object itself");
-      // Maybe the selected object IS the assembly? Try getting its children
-      try {
-        const children = await viewerRef.getHierarchyChildren(modelId, [objectId], 1, false);
-        if (children && children.length > 0) {
-          assemblyParentId = objectId;
-          console.log(`[SelectAssembly] Object itself might be assembly, ${children.length} children`);
-        }
-      } catch (e) { /* ignore */ }
-    }
-
-    if (assemblyParentId === null) {
-      console.log("[SelectAssembly] Could not find assembly container");
-      return;
-    }
-
-    // Step 2: Get ALL children of the assembly parent
-    const children = await viewerRef.getHierarchyChildren(modelId, [assemblyParentId], 5, false);
-    if (!children || children.length === 0) {
-      console.log("[SelectAssembly] Assembly has no children");
-      return;
-    }
-
-    // Flatten children (may be nested)
-    const childIds = new Set();
-    function flattenIds(nodes) {
-      for (const node of nodes) {
-        childIds.add(node.id);
-        if (node.children && node.children.length > 0) {
-          flattenIds(node.children);
+  // Look up which assembly this object belongs to
+  const assemblyKey = assemblyMembershipMap.get(firstUid);
+  if (!assemblyKey) {
+    // Try with numeric ID matching
+    const idx = firstUid.indexOf(":");
+    if (idx > 0) {
+      const modelId = firstUid.substring(0, idx);
+      const objectId = parseInt(firstUid.substring(idx + 1));
+      // Search for this objectId in any assembly
+      for (const [asmKey, childSet] of assemblyChildrenMap.entries()) {
+        if (asmKey.startsWith(modelId + ":") && childSet.has(objectId)) {
+          // Found! Select all children of this assembly
+          console.log(`[SelectAssembly] Found in assembly ${asmKey} (${childSet.size} members)`);
+          for (const childId of childSet) {
+            const uid = `${modelId}:${childId}`;
+            selectedIds.add(uid);
+          }
+          updateTreeAndNotify();
+          return;
         }
       }
     }
-    flattenIds(children);
-
-    // Also add the assembly parent itself
-    childIds.add(assemblyParentId);
-
-    console.log(`[SelectAssembly] Assembly ${assemblyParentId} has ${childIds.size} members`);
-
-    // Step 3: Select these objects in our panel
-    const matchedUids = new Set();
-    for (const cid of childIds) {
-      const uid = `${modelId}:${cid}`;
-      matchedUids.add(uid);
-    }
-
-    // Also match against allObjects by numeric ID
-    for (const obj of allObjects) {
-      if (obj.modelId === modelId && childIds.has(obj.id)) {
-        matchedUids.add(`${obj.modelId}:${obj.id}`);
-      }
-    }
-
-    // Add matched UIDs to selection
-    for (const uid of matchedUids) {
-      selectedIds.add(uid);
-    }
-
-    console.log(`[SelectAssembly] Selected ${matchedUids.size} objects in assembly`);
-
-    // Step 4: Update tree UI
-    document.querySelectorAll(".tree-item").forEach((el) => {
-      if (selectedIds.has(el.dataset.uid)) {
-        el.classList.add("selected");
-        const cb = el.querySelector(".tree-item-checkbox");
-        if (cb) cb.checked = true;
-      }
-    });
-
-    // Step 5: Also highlight in 3D viewer
-    await viewerRef.setSelection({
-      modelObjectIds: [{ modelId, objectRuntimeIds: Array.from(childIds) }]
-    }, "set");
-
-    updateGroupCheckboxStates();
-    updateSummary();
-    notifySelectionChanged();
-    applyHighlightColors();
-  } catch (e) {
-    console.error("[SelectAssembly] Failed:", e);
+    console.log("[SelectAssembly] Object not in any assembly hierarchy");
+    return;
   }
+
+  // Get all children of this assembly
+  const childSet = assemblyChildrenMap.get(assemblyKey);
+  if (!childSet || childSet.size === 0) {
+    console.log("[SelectAssembly] Assembly has no children:", assemblyKey);
+    return;
+  }
+
+  const idx2 = assemblyKey.indexOf(":");
+  const modelId = assemblyKey.substring(0, idx2);
+
+  console.log(`[SelectAssembly] Assembly ${assemblyKey}: selecting ${childSet.size} objects`);
+
+  for (const childId of childSet) {
+    selectedIds.add(`${modelId}:${childId}`);
+  }
+
+  updateTreeAndNotify();
+}
+
+function updateTreeAndNotify() {
+  document.querySelectorAll(".tree-item").forEach((el) => {
+    if (selectedIds.has(el.dataset.uid)) {
+      el.classList.add("selected");
+      const cb = el.querySelector(".tree-item-checkbox");
+      if (cb) cb.checked = true;
+    }
+  });
+  updateGroupCheckboxStates();
+  updateSummary();
+  notifySelectionChanged();
+  applyHighlightColors();
+  syncSelectionToViewer();
 }
 
 // ── Collapse / Expand All Groups ──
