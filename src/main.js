@@ -39,6 +39,7 @@ function dispatchEvent(eventId, data) {
 // ── UI Helpers ──
 function setConnectionStatus(connected, text) {
   const badge = document.getElementById("connection-status");
+  if (!badge) return;
   const statusText = badge.querySelector(".status-text");
   badge.className = `status-badge ${connected ? "connected" : "disconnected"}`;
   statusText.textContent = text || (connected ? "Đã kết nối" : "Đang kết nối...");
@@ -65,48 +66,88 @@ async function init() {
   console.log("[TC Extension] Initializing...");
   initTabs();
 
+  // Check if we're inside an iframe (required for TC extension)
+  const isInIframe = window.parent !== window;
+  if (!isInIframe) {
+    console.warn("[TC Extension] Not running inside an iframe. TC Workspace API requires iframe context.");
+    setConnectionStatus(false, "Không trong iframe");
+    return;
+  }
+
   try {
+    setConnectionStatus(false, "Đang kết nối...");
+
     // Connect with event callback — THE CORRECT WAY for TC Workspace API
+    // The second argument is the event callback that receives ALL events
     api = await connect(
       window.parent,
       (event, data) => {
         console.log("[TC Event]", event, data);
         dispatchEvent(event, data);
       },
-      10000
+      15000 // 15 second timeout
     );
 
     viewer = api.viewer;
-    setConnectionStatus(true);
-    console.log("[TC Extension] Connected to Workspace API");
+    setConnectionStatus(true, "Đã kết nối");
+    console.log("[TC Extension] Connected to Workspace API successfully");
+    console.log("[TC Extension] API keys:", Object.keys(api));
+    console.log("[TC Extension] Viewer keys:", viewer ? Object.keys(viewer) : "null");
 
-    // Request permissions
+    // Request access token permission
     try {
       await api.extension.requestPermission("accesstoken");
       console.log("[TC Extension] Access token permission granted");
     } catch (e) {
-      console.warn("[TC Extension] Permission request failed (may be OK):", e);
+      console.warn("[TC Extension] Permission request failed (may be OK in some contexts):", e.message || e);
     }
 
-    // Initialize feature modules
+    // Initialize feature modules — pass api and viewer references
     initObjectExplorer(api, viewer);
     initSteelStatistics(api, viewer);
 
-    // Log available models
-    try {
-      const models = await viewer.getModels();
-      console.log("[TC Extension] Models loaded:", models);
-      if (models && models.length > 0) {
-        // Models already loaded, trigger scan
-        dispatchEvent("viewer.onModelStateChanged", { models });
-      }
-    } catch (e) {
-      console.warn("[TC Extension] Could not get models:", e);
-    }
+    // Check if models are already loaded
+    await checkExistingModels();
 
   } catch (error) {
     console.error("[TC Extension] Connection failed:", error);
     setConnectionStatus(false, "Lỗi kết nối");
+
+    // Log more details for debugging
+    if (error.message) {
+      console.error("[TC Extension] Error message:", error.message);
+    }
+    if (error.stack) {
+      console.error("[TC Extension] Stack:", error.stack);
+    }
+  }
+}
+
+// ── Check for already-loaded models ──
+async function checkExistingModels() {
+  try {
+    // Try getModels() without filter first (most compatible)
+    const allModels = await viewer.getModels();
+    console.log("[TC Extension] All models:", allModels);
+
+    if (allModels && allModels.length > 0) {
+      // Filter for loaded models
+      const loadedModels = allModels.filter(m => m.state === "loaded");
+      console.log("[TC Extension] Loaded models:", loadedModels.length, "of", allModels.length);
+
+      if (loadedModels.length > 0) {
+        // Models are already loaded — trigger scan
+        console.log("[TC Extension] Triggering initial scan for loaded models");
+        dispatchEvent("viewer.onModelStateChanged", { models: loadedModels });
+      } else {
+        console.log("[TC Extension] No models loaded yet, waiting for onModelStateChanged event...");
+      }
+    } else {
+      console.log("[TC Extension] No models found, waiting for user to load a model...");
+    }
+  } catch (e) {
+    console.warn("[TC Extension] Could not check existing models:", e.message || e);
+    console.log("[TC Extension] Will rely on onModelStateChanged event");
   }
 }
 

@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  base: "/",
+  base: "/TC-Object-Explorer/",
   build: {
     outDir: "dist",
     assetsDir: "assets",
