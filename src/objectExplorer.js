@@ -20,23 +20,34 @@ let lastClickAction = "select"; // "select" or "deselect" — for Shift range
 let isSyncingFromViewer = false; // flag to prevent re-entry during sync
 let lastViewerSelectionKey = ''; // dedup key for polling
 
-// IFC classes that are NOT 3D objects — exclude from panel and statistics
-const IFC_EXCLUDED_CLASSES = new Set([
-  'IfcProject', 'IfcSite', 'IfcBuilding', 'IfcBuildingStorey',
-  'IfcSpace', 'IfcZone', 'IfcGroup', 'IfcSystem',
-  'IfcGrid', 'IfcGridAxis', 'IfcGridPlacement',
-  'IfcAnnotation', 'IfcTextLiteral', 'IfcAnnotationFillArea',
-  'IfcRelAggregates', 'IfcRelContainedInSpatialStructure',
-  'IfcRelDefinesByType', 'IfcRelDefinesByProperties',
-  'IfcRelAssociatesMaterial', 'IfcRelConnectsPathElements',
-  'IfcRelSpaceBoundary', 'IfcRelVoidsElement',
-  'IfcOwnerHistory', 'IfcApplication', 'IfcOrganization',
-  'IfcGeometricRepresentationContext', 'IfcCartesianPoint',
-  'IfcDirection', 'IfcAxis2Placement3D', 'IfcLocalPlacement',
-  'IfcPropertySet', 'IfcPropertySingleValue',
-  'IfcUnitAssignment', 'IfcSIUnit', 'IfcDimensionalExponents',
-  'IfcMaterial', 'IfcMaterialLayer', 'IfcMaterialLayerSet',
-  'IfcElementAssembly', // parent assembly node, not a 3D geometry
+// IFC classes that ARE actual 3D geometry objects (whitelist)
+const IFC_3D_CLASSES = new Set([
+  // Structural elements
+  'IfcBeam', 'IfcColumn', 'IfcPlate', 'IfcMember',
+  'IfcWall', 'IfcWallStandardCase', 'IfcCurtainWall',
+  'IfcSlab', 'IfcRoof', 'IfcStair', 'IfcStairFlight',
+  'IfcRamp', 'IfcRampFlight', 'IfcRailing',
+  'IfcFooting', 'IfcPile', 'IfcFoundation',
+  // Building elements
+  'IfcDoor', 'IfcWindow', 'IfcCovering',
+  'IfcBuildingElementProxy', 'IfcBuildingElement',
+  // Steel / Tekla
+  'IfcDiscreteAccessory', 'IfcFastener', 'IfcMechanicalFastener',
+  'IfcReinforcingBar', 'IfcReinforcingMesh', 'IfcTendon', 'IfcTendonAnchor',
+  // MEP
+  'IfcPipeSegment', 'IfcPipeFitting', 'IfcValve',
+  'IfcDuctSegment', 'IfcDuctFitting', 'IfcDuctSilencer',
+  'IfcCableCarrierSegment', 'IfcCableSegment',
+  'IfcFlowTerminal', 'IfcFlowSegment', 'IfcFlowFitting',
+  'IfcFlowController', 'IfcFlowMovingDevice', 'IfcFlowStorageDevice',
+  'IfcFlowTreatmentDevice', 'IfcEnergyConversionDevice',
+  // Equipment & Furniture
+  'IfcFurnishingElement', 'IfcFurniture', 'IfcEquipmentElement',
+  'IfcTransportElement', 'IfcDistributionElement',
+  // Generic proxy / catch-all for real geometry
+  'IfcProxy', 'IfcElementComponent',
+  // Openings (sometimes needed)
+  'IfcOpeningElement',
 ]);
 
 // ── Init ──
@@ -182,17 +193,18 @@ async function scanObjects() {
 
     console.log(`[ObjectExplorer] Raw scanned ${allObjects.length} objects`);
 
-    // Filter out non-3D objects (levels, grids, sites, buildings, etc.)
+    // Filter: keep ONLY actual 3D geometry objects
     const beforeFilter = allObjects.length;
     allObjects = allObjects.filter(obj => {
-      // Exclude by IFC class
-      if (obj.ifcClass && IFC_EXCLUDED_CLASSES.has(obj.ifcClass)) return false;
-      // Exclude generic non-geometry names
-      const nameLower = (obj.name || '').toLowerCase();
-      if (nameLower.startsWith('level ') || nameLower.startsWith('grid ') || nameLower === 'model group') return false;
-      // Exclude objects with no meaningful data (no name, no volume, no weight, no profile)
-      if (!obj.name && !obj.profile && obj.volume === 0 && obj.weight === 0 && obj.area === 0) return false;
-      return true;
+      const cls = obj.ifcClass || '';
+
+      // If IFC class is known → only keep 3D geometry classes
+      if (cls) {
+        return IFC_3D_CLASSES.has(cls);
+      }
+
+      // If no IFC class → keep only if it has physical data (volume, weight, or area)
+      return (obj.volume > 0 || obj.weight > 0 || obj.area > 0);
     });
     console.log(`[ObjectExplorer] Filtered: ${beforeFilter} → ${allObjects.length} 3D objects`);
 
