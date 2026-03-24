@@ -85,22 +85,64 @@ export function exportToExcel(data, groupBy, selectedOnly) {
     ],
   ];
 
-  const detailRows = data.map((obj, idx) => [
-    idx + 1,
-    obj.name || "",
-    obj.profile || "",
-    obj.ifcClass || "",
-    obj.type || "",
-    obj.assemblyPos || "",
-    obj.assemblyName || "",
-    obj.assemblyPosCode || "",
-    obj.group || "",
-    obj.material || "",
-    r(obj.volume || 0, 6),
-    r(obj.area || 0, 4),
-    r(obj.weight || 0, 2),
-    r(obj.length || 0, 3),
-  ]);
+  // Sort data by ASSEMBLY_POS → ASSEMBLY_NAME → Name for grouped display
+  const sortedData = [...data].sort((a, b) => {
+    const posA = (a.assemblyPos || "zzz").toLowerCase();
+    const posB = (b.assemblyPos || "zzz").toLowerCase();
+    if (posA !== posB) return posA.localeCompare(posB);
+    const nameA = (a.assemblyName || "zzz").toLowerCase();
+    const nameB = (b.assemblyName || "zzz").toLowerCase();
+    if (nameA !== nameB) return nameA.localeCompare(nameB);
+    return (a.name || "").localeCompare(b.name || "");
+  });
+
+  // Build detail rows with group headers
+  const detailRows = [];
+  let currentPos = null;
+  let currentAsmName = null;
+  let stt = 0;
+  const mergeRows = []; // Track group header row indices for merging
+
+  for (const obj of sortedData) {
+    const pos = obj.assemblyPos || "(Không có Assembly Pos)";
+    const asmName = obj.assemblyName || "(Không có Assembly Name)";
+
+    // Insert ASSEMBLY_POS group header
+    if (pos !== currentPos) {
+      currentPos = pos;
+      currentAsmName = null; // Reset subgroup
+      detailRows.push([]); // blank separator
+      const headerRowIdx = detailHeader.length + detailRows.length;
+      detailRows.push([`▶ ASSEMBLY POS: ${pos}`, "", "", "", "", "", "", "", "", "", "", "", "", ""]);
+      mergeRows.push(headerRowIdx);
+    }
+
+    // Insert ASSEMBLY_NAME subgroup header
+    if (asmName !== currentAsmName) {
+      currentAsmName = asmName;
+      const headerRowIdx = detailHeader.length + detailRows.length;
+      detailRows.push([`   ▸ ASSEMBLY NAME: ${asmName}`, "", "", "", "", "", "", "", "", "", "", "", "", ""]);
+      mergeRows.push(headerRowIdx);
+    }
+
+    stt++;
+    detailRows.push([
+      stt,
+      obj.name || "",
+      obj.profile || "",
+      obj.ifcClass || "",
+      obj.type || "",
+      obj.assemblyPos || "",
+      obj.assemblyName || "",
+      obj.assemblyPosCode || "",
+      obj.group || "",
+      obj.material || "",
+      r(obj.volume || 0, 6),
+      r(obj.area || 0, 4),
+      r(obj.weight || 0, 2),
+      r(obj.length || 0, 3),
+    ]);
+  }
 
   detailRows.push([]);
   detailRows.push([
@@ -115,7 +157,13 @@ export function exportToExcel(data, groupBy, selectedOnly) {
     { wch: 18 }, { wch: 15 },
     { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 14 },
   ];
-  wsDetail["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 13 } }];
+
+  // Merge: title row + all group header rows
+  const merges = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 13 } }];
+  for (const rowIdx of mergeRows) {
+    merges.push({ s: { r: rowIdx, c: 0 }, e: { r: rowIdx, c: 13 } });
+  }
+  wsDetail["!merges"] = merges;
   XLSX.utils.book_append_sheet(wb, wsDetail, "Chi tiết");
 
   // ── Sheet 3-7: Grouped sheets for each category ──
