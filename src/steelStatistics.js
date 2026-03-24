@@ -43,15 +43,13 @@ function updateStatistics() {
   const showAll = document.getElementById("stats-all-toggle").checked;
   const groupBy = document.getElementById("stats-group-by").value;
 
-  // When "Toàn bộ dự án" is unchecked, show selected objects; if none selected, show all
+  // When "Toàn bộ dự án" is unchecked, show selected objects only
   const selIds = getSelectedIds();
   let objects;
   if (showAll) {
     objects = getAllObjects();
-  } else if (selIds.size > 0) {
-    objects = getSelectedObjects();
   } else {
-    objects = getAllObjects();
+    objects = getSelectedObjects(); // returns [] if nothing selected
   }
   if (!objects || objects.length === 0) {
     clearStats();

@@ -45,7 +45,6 @@ export function initObjectExplorer(api, viewer) {
   document.getElementById("group-by-select").addEventListener("change", renderTree);
   document.getElementById("btn-highlight").addEventListener("click", toggleHighlight);
   document.getElementById("btn-isolate").addEventListener("click", toggleIsolate);
-  document.getElementById("btn-show-labels").addEventListener("click", toggleLabels);
   document.getElementById("btn-reset").addEventListener("click", resetAll);
   document.getElementById("btn-refresh").addEventListener("click", scanObjects);
 }
@@ -54,7 +53,7 @@ export function initObjectExplorer(api, viewer) {
 export function getAllObjects() { return allObjects; }
 export function getSelectedIds() { return selectedIds; }
 export function getSelectedObjects() {
-  if (selectedIds.size === 0) return allObjects;
+  if (selectedIds.size === 0) return [];
   return allObjects.filter((o) => selectedIds.has(`${o.modelId}:${o.id}`));
 }
 
