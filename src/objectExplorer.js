@@ -18,6 +18,7 @@ let searchTimeout = null;
 let lastClickedItem = null; // for Shift+click range selection
 let lastClickAction = "select"; // "select" or "deselect" — for Shift range
 let isSyncingFromViewer = false; // prevent infinite loop with TC selection sync
+let syncCooldownTimer = null; // debounce timer for sync cooldown
 
 // ── Init ──
 export function initObjectExplorer(api, viewer) {
@@ -30,9 +31,11 @@ export function initObjectExplorer(api, viewer) {
     scanObjects();
   });
 
-  // Listen for TC viewer selection changes (Feature #4)
+  // Listen for TC viewer selection changes
   onEvent("viewer.onSelectionChanged", (data) => {
     if (isSyncingFromViewer) return;
+    // Debounce: ignore rapid re-fire from our own sync
+    if (syncCooldownTimer) return;
     handleViewerSelectionChanged(data);
   });
 
@@ -526,28 +529,28 @@ async function applyHighlightColors() {
 }
 
 // Sync panel selection to TC viewer (one-way: panel → viewer)
+// Uses cooldown to prevent the resulting onSelectionChanged event from looping back.
 async function syncSelectionToViewer() {
-  if (selectedIds.size === 0) {
-    try {
-      isSyncingFromViewer = true;
-      await viewerRef.setSelection({ modelObjectIds: [] }, "set");
-    } catch (e) { /* ignore */ }
-    finally { isSyncingFromViewer = false; }
-    return;
-  }
-
   const modelMap = buildModelMap();
   try {
     isSyncingFromViewer = true;
-    await viewerRef.setSelection(
-      {
-        modelObjectIds: Object.entries(modelMap).map(([modelId, ids]) => ({
-          modelId,
-          objectRuntimeIds: ids,
-        })),
-      },
-      "set"
-    );
+    // Set cooldown to block echo events for 600ms
+    clearTimeout(syncCooldownTimer);
+    syncCooldownTimer = setTimeout(() => { syncCooldownTimer = null; }, 600);
+
+    if (selectedIds.size === 0) {
+      await viewerRef.setSelection({ modelObjectIds: [] }, "set");
+    } else {
+      await viewerRef.setSelection(
+        {
+          modelObjectIds: Object.entries(modelMap).map(([modelId, ids]) => ({
+            modelId,
+            objectRuntimeIds: ids,
+          })),
+        },
+        "set"
+      );
+    }
   } catch (e) {
     console.warn("[ObjectExplorer] setSelection failed:", e);
   } finally {
@@ -659,15 +662,13 @@ function getObjectLabel(obj) {
 }
 
 // ── Handle TC Viewer selection → sync tree checkboxes ──
-// This is called when user selects objects via single-click or area-select in TC 3D viewer.
-// We merge the viewer's selection into our panel and keep existing selections (persistent memory).
+// Called when user selects objects via single-click or area-select in TC 3D viewer.
+// Merges viewer selection into panel. Does NOT call syncSelectionToViewer to avoid loop.
 function handleViewerSelectionChanged(data) {
   if (!allObjects || allObjects.length === 0) return;
 
   try {
-    // data can be various formats depending on TC API version:
-    // { modelObjectIds: [{ modelId, objectRuntimeIds: number[] }] }
-    // or just [{ modelId, objectRuntimeIds: number[] }]
+    // Parse data (various formats depending on TC API version)
     let modelObjIds = null;
     if (data && data.modelObjectIds) {
       modelObjIds = data.modelObjectIds;
@@ -690,12 +691,12 @@ function handleViewerSelectionChanged(data) {
       }
     }
 
-    // PERSISTENT SELECTION: if viewer sends empty selection (user clicked on
-    // empty space or switched tool), keep existing panel selections intact.
+    // PERSISTENT SELECTION: if viewer sends empty selection (user clicked
+    // empty space or switched tool), keep existing panel selections.
     if (viewerSelectedUids.size === 0) {
-      console.log("[ObjectExplorer] Viewer sent empty selection — keeping existing panel selection");
-      // Re-sync our existing selections back to the viewer so they stay highlighted
-      syncSelectionToViewer();
+      console.log("[ObjectExplorer] Viewer sent empty selection — keeping panel selection");
+      // Just re-apply highlight colors so our selected objects stay visible
+      applyHighlightColors();
       return;
     }
 
@@ -727,10 +728,7 @@ function handleViewerSelectionChanged(data) {
     notifySelectionChanged();
     applyHighlightColors();
 
-    // Sync full selection (including previously selected) back to TC viewer
-    syncSelectionToViewer();
-
-    console.log(`[ObjectExplorer] Added ${viewerSelectedUids.size} objects from TC viewer (total: ${selectedIds.size})`);
+    console.log(`[ObjectExplorer] Added ${viewerSelectedUids.size} from viewer (total: ${selectedIds.size})`);
   } catch (e) {
     console.warn("[ObjectExplorer] Viewer selection sync error:", e);
   }
