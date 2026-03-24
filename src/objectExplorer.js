@@ -487,72 +487,87 @@ function parseObjectProperties(props, modelId) {
       }
 
       // ── Assembly Properties Detection ──
-      // Strategy: scan property name (both original and lowercased) for assembly-related fields
+      // Strategy: scan property name for assembly-related fields
+      // IMPORTANT: match ASSEMBLY_POS strictly (not position_code!)
       const rawPropName = prop.name || "";
       const asmVal = String(propValue || "").trim();
 
       if (asmVal) {
-        // Normalize: remove spaces, underscores, dots → compare
+        // Normalize: remove spaces, underscores, dots, hyphens → compare
         const normalized = propName.replace(/[\s_.\-]/g, "");
 
-        // ASSEMBLY_POS / ASSEMBLY_POSITION (unique per assembly instance)
-        if (
+        // Debug: log any property that contains "assembly" (first 5 objects)
+        if (!window._asmDebugCount) window._asmDebugCount = 0;
+        if (normalized.includes("assembly") && window._asmDebugCount < 5) {
+          console.log(`[ASM_DEBUG] Object ${props.id} | "${rawPropName}" = "${asmVal}" | normalized="${normalized}" | PSet="${pSet.name}"`);
+        }
+
+        // ASSEMBLY_POS — strict matching only
+        // Must be exactly "assemblypos" (NOT "assemblypositioncode", NOT "assemblyposition")
+        const isAssemblyPos = (
           normalized === "assemblypos" ||
-          normalized === "assemblyposition" ||
           rawPropName === "ASSEMBLY_POS" ||
           rawPropName === "ASSEMBLY.ASSEMBLY_POS" ||
           rawPropName === "Assembly_Pos" ||
           rawPropName === "Assembly Pos" ||
           rawPropName === "AssemblyPos" ||
-          rawPropName === "ASSEMBLY POSITION" ||
+          rawPropName === "ASSEMBLY_POSITION" ||
           rawPropName === "Assembly Position" ||
-          (normalized.startsWith("assembly") && (normalized.endsWith("pos") || normalized === "assemblyposition"))
-        ) {
+          rawPropName === "AssemblyMark" ||
+          rawPropName === "ASSEMBLY_MARK" ||
+          rawPropName === "Assembly Mark" ||
+          rawPropName === "Assembly_Mark"
+        );
+        // Exclude: must NOT contain "code" or "prefix"
+        const isExcludedFromPos = normalized.includes("code") || normalized.includes("prefix");
+
+        if (isAssemblyPos && !isExcludedFromPos && !result.assemblyPos) {
           result.assemblyPos = asmVal;
+          console.log(`[ASM] Object ${props.id}: assemblyPos = "${asmVal}" (from "${rawPropName}")`);
         }
 
-        // ASSEMBLY_NAME
+        // ASSEMBLY_NAME — strict matching
         if (
-          normalized === "assemblyname" ||
-          rawPropName === "ASSEMBLY_NAME" ||
-          rawPropName === "ASSEMBLY.ASSEMBLY_NAME" ||
-          rawPropName === "Assembly_Name" ||
-          rawPropName === "Assembly Name" ||
-          rawPropName === "AssemblyName" ||
-          (normalized.startsWith("assembly") && normalized.endsWith("name") && !normalized.includes("file"))
+          !result.assemblyName && (
+            normalized === "assemblyname" ||
+            rawPropName === "ASSEMBLY_NAME" ||
+            rawPropName === "ASSEMBLY.ASSEMBLY_NAME" ||
+            rawPropName === "Assembly_Name" ||
+            rawPropName === "Assembly Name" ||
+            rawPropName === "AssemblyName"
+          )
         ) {
           result.assemblyName = asmVal;
         }
 
-        // ASSEMBLY_POSITION_CODE
+        // ASSEMBLY_POSITION_CODE — strict matching
         if (
-          normalized === "assemblypositioncode" ||
-          normalized === "assemblyprefixcode" ||
-          rawPropName === "ASSEMBLY_POSITION_CODE" ||
-          rawPropName === "ASSEMBLY.ASSEMBLY_POSITION_CODE" ||
-          rawPropName === "Assembly_Position_Code" ||
-          rawPropName === "Assembly Position Code" ||
-          rawPropName === "AssemblyPositionCode" ||
-          (normalized.startsWith("assembly") && normalized.includes("code"))
+          !result.assemblyPosCode && (
+            normalized === "assemblypositioncode" ||
+            normalized === "assemblyprefixcode" ||
+            rawPropName === "ASSEMBLY_POSITION_CODE" ||
+            rawPropName === "ASSEMBLY.ASSEMBLY_POSITION_CODE" ||
+            rawPropName === "Assembly_Position_Code" ||
+            rawPropName === "Assembly Position Code" ||
+            rawPropName === "AssemblyPositionCode"
+          )
         ) {
           result.assemblyPosCode = asmVal;
         }
 
-        // Generic assembly mark (fallback for display)
+        // Generic assembly (fallback for display)
         if (
-          propName === "assembly" ||
-          normalized === "assemblymark" ||
-          normalized === "assemblycode" ||
-          rawPropName === "ASSEMBLY_MARK" ||
-          rawPropName === "ASSEMBLY MARK" ||
-          rawPropName === "Assembly Mark" ||
-          propName === "tekla assembly mark" ||
-          propName === "tekla_assembly" ||
-          normalized === "mainmark" ||
-          normalized === "partpos" ||
-          normalized === "preliminarymark"
+          !result.assembly && (
+            propName === "assembly" ||
+            normalized === "assemblymark" ||
+            normalized === "assemblycode" ||
+            propName === "tekla assembly mark" ||
+            propName === "tekla_assembly" ||
+            normalized === "mainmark" ||
+            normalized === "preliminarymark"
+          )
         ) {
-          if (!result.assembly) result.assembly = asmVal;
+          result.assembly = asmVal;
         }
       }
 
