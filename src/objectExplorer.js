@@ -235,12 +235,26 @@ async function scanObjects() {
       console.log(`[ObjectExplorer] Deduplicated: ${beforeDedup} → ${allObjects.length} objects (removed ${beforeDedup - allObjects.length} duplicates)`);
     }
 
-    // Filter: exclude IFC metadata objects that are never 3D geometry
+    // Filter Stage 1: exclude IFC metadata/non-3D classes
     const NON_3D_CLASSES = new Set([
+      // IFC structural/metadata
       "ifcproject", "ifcsite", "ifcbuilding", "ifcbuildingstorey",
       "ifcspace", "ifcgroup", "ifcopeningelement", "ifcownerhistory",
       "ifcreldefinesbyproperties", "ifcrelassociatesmaterial",
       "ifcrelcontainedinspatialstructure", "ifcrelaggregates",
+      // Grid & Level (Revit/IFC)
+      "ifcgrid", "ifcgridaxis", "ifcgridplacement",
+      // Annotations & 2D
+      "ifcannotation", "ifcannotationfillarea",
+      "ifctextliteral", "ifctextliteralwithextent",
+      // Spatial zones
+      "ifczone", "ifcspatialzone",
+      // Virtual / proxy non-geometry
+      "ifcvirtualelement",
+      // Distribution systems (MEP abstract)
+      "ifcdistributionsystem", "ifcsystem",
+      // Revit-specific non-3D
+      "ifcbuildingelementproxy", // often used for levels/grids in Revit exports
     ]);
     const beforeFilter = allObjects.length;
     allObjects = allObjects.filter((obj) => {
@@ -248,7 +262,7 @@ async function scanObjects() {
       return !NON_3D_CLASSES.has(cls);
     });
     console.log(
-      `[ObjectExplorer] Filtered: ${beforeFilter} → ${allObjects.length} objects (removed ${beforeFilter - allObjects.length} non-3D metadata)`,
+      `[ObjectExplorer] Stage 1 filter: ${beforeFilter} → ${allObjects.length} objects (removed ${beforeFilter - allObjects.length} non-3D classes)`,
     );
 
     // Assign assembly instances via Tekla properties (ASSEMBLY_POS)
@@ -267,6 +281,16 @@ async function scanObjects() {
 
     // Build display names for assembly groups
     buildAssemblyDisplayNames();
+
+    // Filter Stage 2: keep only objects with physical data (volume, weight, or area > 0)
+    // This removes non-3D assemblies, grids, levels, and any object without measurable geometry
+    const beforePhysicalFilter = allObjects.length;
+    allObjects = allObjects.filter((obj) => {
+      return obj.volume > 0 || obj.weight > 0 || obj.area > 0;
+    });
+    console.log(
+      `[ObjectExplorer] Stage 2 filter: ${beforePhysicalFilter} → ${allObjects.length} objects (removed ${beforePhysicalFilter - allObjects.length} objects with no physical data)`,
+    );
 
     filteredObjects = [...allObjects];
     selectedIds.clear();
@@ -1123,6 +1147,9 @@ function updateGroupCheckboxStates() {
 }
 
 function toggleSelection(uid, el) {
+  const treeContainer = document.getElementById("object-tree");
+  const savedScroll = treeContainer ? treeContainer.scrollTop : 0;
+
   if (selectedIds.has(uid)) {
     selectedIds.delete(uid);
     el.classList.remove("selected");
@@ -1137,6 +1164,9 @@ function toggleSelection(uid, el) {
   notifySelectionChanged();
   applyHighlightColors();
   syncSelectionToViewer();
+
+  // Restore scroll position to prevent auto-scroll
+  if (treeContainer) treeContainer.scrollTop = savedScroll;
 }
 
 // ── Select Assembly — select all objects sharing the same assembly as the selected object ──
@@ -1300,6 +1330,11 @@ async function applyHighlightColors() {
 // Sync panel selection to TC viewer (one-way: panel → viewer)
 async function syncSelectionToViewer() {
   const modelMap = buildModelMap();
+
+  // Update lastViewerSelectionKey so polling dedup won't re-trigger scroll
+  const currentUids = Array.from(selectedIds).sort().join(",");
+  lastViewerSelectionKey = currentUids;
+
   try {
     isSyncingFromViewer = true;
 
@@ -1539,27 +1574,7 @@ function handleViewerSelectionChanged(data) {
     notifySelectionChanged();
     applyHighlightColors();
 
-    // Step 9: Scroll to the first selected item in the panel
-    // Only scroll when selection genuinely changed from the 3D viewer (not polling echo)
-    setTimeout(() => {
-      const firstSel = document.querySelector(".tree-item.selected");
-      if (!firstSel) return;
-
-      // Expand the parent group so the item is visible
-      const group = firstSel.closest(".tree-group");
-      if (group && group.classList.contains("collapsed")) {
-        group.classList.remove("collapsed");
-      }
-
-      // Manual scroll: calculate position relative to tree container
-      const treeContainer = document.getElementById("object-tree");
-      if (treeContainer) {
-        const containerRect = treeContainer.getBoundingClientRect();
-        const itemRect = firstSel.getBoundingClientRect();
-        const scrollOffset = itemRect.top - containerRect.top - (containerRect.height / 2) + treeContainer.scrollTop;
-        treeContainer.scrollTo({ top: Math.max(0, scrollOffset), behavior: "smooth" });
-      }
-    }, 100);
+    // No auto-scroll or auto-expand — user controls the panel view manually.
   } catch (e) {
     console.warn("[ObjectExplorer] Viewer selection sync error:", e);
   }
