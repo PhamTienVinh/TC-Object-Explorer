@@ -16,6 +16,7 @@ let selectedIds = new Set(); // Set of "modelId:objectId"
 // Assembly hierarchy maps (built during scan)
 let assemblyMembershipMap = new Map(); // "modelId:objectId" -> "modelId:assemblyParentId"
 let assemblyChildrenMap = new Map(); // "modelId:assemblyParentId" -> Set([objectId1, objectId2, ...])
+let assemblyNodeInfoMap = new Map(); // "modelId:assemblyNodeId" -> { id, name, class, modelId }
 let isolateActive = false;
 let searchTimeout = null;
 let lastClickedItem = null; // for Shift+click range selection
@@ -246,10 +247,18 @@ async function scanObjects() {
     // Assign assembly instances via Tekla properties (ASSEMBLY_POS)
     assignAssemblyInstances();
 
-    // Build IFC hierarchy-based assembly map
+    // Build IFC hierarchy-based assembly map (like TC Windows)
     await buildAssemblyHierarchyMap(models);
 
-    // Build display names for assembly groups  
+    // Enrich objects missing ASSEMBLY_POS using IFC hierarchy
+    // This mimics how Trimble Connect for Windows groups parts:
+    // parts under the same IfcElementAssembly node share the same assembly
+    await enrichAssemblyFromHierarchy();
+
+    // Re-assign instances after enrichment
+    assignAssemblyInstances();
+
+    // Build display names for assembly groups
     buildAssemblyDisplayNames();
 
     filteredObjects = [...allObjects];
@@ -329,9 +338,11 @@ function assignAssemblyInstances() {
 
 // ── Build Assembly Hierarchy Map ──
 // Walks the IFC hierarchy to find IfcElementAssembly nodes and maps children → parent
+// This replicates how Trimble Connect for Windows detects assemblies
 async function buildAssemblyHierarchyMap(models) {
   assemblyMembershipMap.clear();
   assemblyChildrenMap.clear();
+  assemblyNodeInfoMap.clear();
 
   if (!viewerRef || !models || models.length === 0) return;
 
@@ -351,6 +362,14 @@ async function buildAssemblyHierarchyMap(models) {
             // This is an assembly node - collect all its children
             const assemblyKey = `${modelId}:${node.id}`;
             const childSet = new Set();
+
+            // Store assembly node info for later enrichment
+            assemblyNodeInfoMap.set(assemblyKey, {
+              id: node.id,
+              name: node.name || "",
+              class: node.class || "",
+              modelId: modelId,
+            });
 
             function collectChildren(childNodes) {
               if (!childNodes) return;
@@ -385,7 +404,74 @@ async function buildAssemblyHierarchyMap(models) {
     }
   }
 
-  console.log(`[ObjectExplorer] Assembly hierarchy: ${assemblyChildrenMap.size} assemblies, ${assemblyMembershipMap.size} mapped objects`);
+  console.log(`[ObjectExplorer] Assembly hierarchy: ${assemblyChildrenMap.size} assemblies, ${assemblyMembershipMap.size} mapped objects, ${assemblyNodeInfoMap.size} assembly nodes`);
+}
+
+// ── Enrich objects with assembly info from IFC hierarchy ──
+// Mimics Trimble Connect for Windows behavior:
+// Parts under the same IfcElementAssembly node belong to the same assembly.
+// The assembly node's name = ASSEMBLY_POS equivalent.
+// Also tries to fetch the assembly node's own properties for accurate ASSEMBLY_POS.
+async function enrichAssemblyFromHierarchy() {
+  if (assemblyNodeInfoMap.size === 0) return;
+
+  // Step 1: Try to fetch properties of each assembly node to get accurate ASSEMBLY_POS
+  const assemblyNodeProps = new Map(); // assemblyKey -> { assemblyPos, assemblyName }
+  for (const [assemblyKey, nodeInfo] of assemblyNodeInfoMap) {
+    try {
+      const propsArray = await viewerRef.getObjectProperties(nodeInfo.modelId, [nodeInfo.id]);
+      if (propsArray && propsArray.length > 0) {
+        const parsed = parseObjectProperties(propsArray[0], nodeInfo.modelId);
+        assemblyNodeProps.set(assemblyKey, {
+          assemblyPos: parsed.assemblyPos || nodeInfo.name || "",
+          assemblyName: parsed.assemblyName || parsed.assembly || nodeInfo.name || "",
+          assemblyPosCode: parsed.assemblyPosCode || "",
+        });
+      }
+    } catch (e) {
+      // Fallback: use node name from hierarchy
+      assemblyNodeProps.set(assemblyKey, {
+        assemblyPos: nodeInfo.name || "",
+        assemblyName: nodeInfo.name || "",
+        assemblyPosCode: "",
+      });
+    }
+  }
+
+  // Step 2: Enrich objects that don't have assembly properties yet
+  let enrichedCount = 0;
+  for (const obj of allObjects) {
+    // Skip objects that already have ASSEMBLY_POS from Tekla property sets
+    if (obj.assemblyPos) continue;
+
+    // Look up this object's parent assembly in the hierarchy
+    const objectKey = `${obj.modelId}:${obj.id}`;
+    const assemblyKey = assemblyMembershipMap.get(objectKey);
+    if (!assemblyKey) continue;
+
+    const asmProps = assemblyNodeProps.get(assemblyKey);
+    if (!asmProps) continue;
+
+    // Fill in missing assembly properties from the hierarchy
+    if (!obj.assemblyPos && asmProps.assemblyPos) {
+      obj.assemblyPos = asmProps.assemblyPos;
+    }
+    if (!obj.assemblyName && asmProps.assemblyName) {
+      obj.assemblyName = asmProps.assemblyName;
+    }
+    if (!obj.assemblyPosCode && asmProps.assemblyPosCode) {
+      obj.assemblyPosCode = asmProps.assemblyPosCode;
+    }
+    if (!obj.assembly) {
+      obj.assembly = asmProps.assemblyName || asmProps.assemblyPos || "";
+    }
+    obj.isTekla = true;
+    enrichedCount++;
+  }
+
+  if (enrichedCount > 0) {
+    console.log(`[ObjectExplorer] Enriched ${enrichedCount} objects with assembly info from IFC hierarchy (TC Windows method)`);
+  }
 }
 
 // Build human-readable display names for assembly groups
