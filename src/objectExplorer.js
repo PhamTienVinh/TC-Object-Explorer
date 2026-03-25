@@ -321,18 +321,96 @@ async function fetchAndParseProperties(modelId, objectIds) {
   }
 }
 
+// ── Centralized Assembly Property Classifier ──
+// Classifies any IFC property name into assembly categories.
+// Returns: "pos" | "name" | "code" | "mark" | "generic" | null
+function classifyAssemblyProperty(rawPropName) {
+  if (!rawPropName) return null;
+
+  // Strip dot-prefix notation (e.g. "Tekla.ASSEMBLY_POS" → "ASSEMBLY_POS")
+  let cleanName = rawPropName;
+  const lastDot = rawPropName.lastIndexOf(".");
+  const lastSlash = rawPropName.lastIndexOf("/");
+  const lastSep = Math.max(lastDot, lastSlash);
+  if (lastSep > 0 && lastSep < rawPropName.length - 1) {
+    cleanName = rawPropName.substring(lastSep + 1);
+  }
+
+  // Normalize: lowercase, remove spaces, underscores, dots, hyphens
+  const norm = cleanName.toLowerCase().replace(/[\s_.\-]/g, "");
+
+  // ── ASSEMBLY_POS detection ──
+  if (
+    norm === "assemblypos" ||
+    norm === "assemblyposition" ||
+    norm === "mainpartpos" ||
+    norm === "mainpartposition"
+  ) {
+    if (!norm.includes("code") && !norm.includes("prefix") && !norm.includes("number")) {
+      return "pos";
+    }
+  }
+
+  // ── ASSEMBLY_MARK detection ──
+  if (
+    norm === "assemblymark" ||
+    norm === "assemblemark" ||
+    norm === "asmmark" ||
+    norm === "mainmark" ||
+    norm === "mainpartmark"
+  ) {
+    return "mark";
+  }
+
+  // ── ASSEMBLY_NAME detection ──
+  if (
+    norm === "assemblyname" ||
+    norm === "assemblename" ||
+    norm === "asmname"
+  ) {
+    return "name";
+  }
+
+  // ── ASSEMBLY_POSITION_CODE detection ──
+  if (
+    norm === "assemblypositioncode" ||
+    norm === "assemblyposcode" ||
+    norm === "assemblyprefixcode" ||
+    norm === "assemblyprefix" ||
+    norm === "positioncode"
+  ) {
+    return "code";
+  }
+
+  // ── Generic assembly fallback ──
+  if (
+    norm === "assembly" ||
+    norm === "assemblycode" ||
+    norm === "teklaassembly" ||
+    norm === "teklaassemblymark" ||
+    norm === "preliminarymark"
+  ) {
+    return "generic";
+  }
+
+  // Regex fallback for unusual patterns (e.g. "Asm Pos", "Main_Part_Pos")
+  if (/^ass?e?m(?:bly)?[\s_.-]?pos(?:ition)?$/i.test(cleanName)) return "pos";
+  if (/^ass?e?m(?:bly)?[\s_.-]?mark$/i.test(cleanName)) return "mark";
+  if (/^ass?e?m(?:bly)?[\s_.-]?name$/i.test(cleanName)) return "name";
+  if (/^main[\s_.-]?part[\s_.-]?pos(?:ition)?$/i.test(cleanName)) return "pos";
+
+  return null;
+}
+
 // ── Assembly Instance Assignment by Tekla Properties ──
 // Uses ASSEMBLY_POS as unique instance identifier (unique per physical assembly in Tekla)
 function assignAssemblyInstances() {
   for (const obj of allObjects) {
     if (obj.assemblyPos) {
-      // Best: ASSEMBLY_POS is unique per physical assembly in Tekla
       obj.assemblyInstanceId = `${obj.modelId}:pos_${obj.assemblyPos}`;
     } else if (obj.assemblyName) {
-      // Fallback: ASSEMBLY_NAME
       obj.assemblyInstanceId = `${obj.modelId}:aname_${obj.assemblyName}`;
     } else if (obj.assembly) {
-      // Fallback: generic assembly field
       obj.assemblyInstanceId = `${obj.modelId}:name_${obj.assembly}`;
     } else {
       obj.assemblyInstanceId = "";
@@ -568,28 +646,14 @@ function parseObjectProperties(props, modelId) {
       setName === "tekla quantity"
     ) {
       result.isTekla = true;
-
-      // Debug: log ALL properties from Tekla property sets (first 3 objects only)
-      if (!window._teklaDebugCount) window._teklaDebugCount = 0;
-      if (window._teklaDebugCount < 3) {
-        const propDebug = properties.map(p => `  ${p.name} = ${p.value}`).join("\n");
-        console.log(`[TEKLA DEBUG] Object ${props.id} | PSet: "${pSet.name}"\n${propDebug}`);
-      }
     }
 
-    // Also detect Tekla from well-known property set patterns
-    if (
-      setName.includes("pset_") ||
-      setName.includes("basequ") ||
-      setName.includes("ifc") ||
-      setName === "quantities"
-    ) {
-      // Scan for assembly-related properties in any property set
+    // Also detect Tekla from assembly-related properties in any property set
+    if (!result.isTekla) {
       for (const p of properties) {
-        const pn = (p.name || "").toLowerCase().replace(/[\s_.\-]/g, "");
-        if (pn.includes("assembly") && !result.isTekla) {
-          // If we find assembly-related props, this might be Tekla
+        if (classifyAssemblyProperty(p.name || "")) {
           result.isTekla = true;
+          break;
         }
       }
     }
@@ -604,90 +668,29 @@ function parseObjectProperties(props, modelId) {
         result.name = String(propValue || "");
       }
 
-      // ── Assembly Properties Detection ──
-      // Strategy: scan property name for assembly-related fields
-      // IMPORTANT: match ASSEMBLY_POS strictly (not position_code!)
+      // ── Assembly Properties Detection (using centralized classifier) ──
       const rawPropName = prop.name || "";
       const asmVal = String(propValue || "").trim();
 
       if (asmVal) {
-        // Normalize: remove spaces, underscores, dots, hyphens → compare
-        const normalized = propName.replace(/[\s_.\-]/g, "");
-
-        // Store ALL raw properties for debug/export
+        // Store raw properties for export
         result.rawProperties.push({ pset: pSet.name || "", name: rawPropName, value: asmVal });
 
-        // Debug: log any property that contains "assembly" (first 5 objects)
-        if (!window._asmDebugCount) window._asmDebugCount = 0;
-        if (normalized.includes("assembly") && window._asmDebugCount < 5) {
-          console.log(`[ASM_DEBUG] Object ${props.id} | "${rawPropName}" = "${asmVal}" | normalized="${normalized}" | PSet="${pSet.name}"`);
-        }
+        // Classify the property
+        const asmClass = classifyAssemblyProperty(rawPropName);
 
-        // ASSEMBLY_POS — strict matching only
-        // Must be exactly "assemblypos" (NOT "assemblypositioncode", NOT "assemblyposition")
-        const isAssemblyPos = (
-          normalized === "assemblypos" ||
-          rawPropName === "ASSEMBLY_POS" ||
-          rawPropName === "ASSEMBLY.ASSEMBLY_POS" ||
-          rawPropName === "Assembly_Pos" ||
-          rawPropName === "Assembly Pos" ||
-          rawPropName === "AssemblyPos" ||
-          rawPropName === "ASSEMBLY_POSITION" ||
-          rawPropName === "Assembly Position" ||
-          rawPropName === "AssemblyMark" ||
-          rawPropName === "ASSEMBLY_MARK" ||
-          rawPropName === "Assembly Mark" ||
-          rawPropName === "Assembly_Mark"
-        );
-        // Exclude: must NOT contain "code" or "prefix"
-        const isExcludedFromPos = normalized.includes("code") || normalized.includes("prefix");
-
-        if (isAssemblyPos && !isExcludedFromPos && !result.assemblyPos) {
+        if (asmClass === "pos" && !result.assemblyPos) {
           result.assemblyPos = asmVal;
           console.log(`[ASM] Object ${props.id}: assemblyPos = "${asmVal}" (from "${rawPropName}")`);
-        }
-
-        // ASSEMBLY_NAME — strict matching
-        if (
-          !result.assemblyName && (
-            normalized === "assemblyname" ||
-            rawPropName === "ASSEMBLY_NAME" ||
-            rawPropName === "ASSEMBLY.ASSEMBLY_NAME" ||
-            rawPropName === "Assembly_Name" ||
-            rawPropName === "Assembly Name" ||
-            rawPropName === "AssemblyName"
-          )
-        ) {
+        } else if (asmClass === "mark" && !result.assemblyPos) {
+          // ASSEMBLY_MARK is used as assemblyPos fallback (unique per assembly)
+          result.assemblyPos = asmVal;
+          console.log(`[ASM] Object ${props.id}: assemblyPos(mark) = "${asmVal}" (from "${rawPropName}")`);
+        } else if (asmClass === "name" && !result.assemblyName) {
           result.assemblyName = asmVal;
-        }
-
-        // ASSEMBLY_POSITION_CODE — strict matching
-        if (
-          !result.assemblyPosCode && (
-            normalized === "assemblypositioncode" ||
-            normalized === "assemblyprefixcode" ||
-            rawPropName === "ASSEMBLY_POSITION_CODE" ||
-            rawPropName === "ASSEMBLY.ASSEMBLY_POSITION_CODE" ||
-            rawPropName === "Assembly_Position_Code" ||
-            rawPropName === "Assembly Position Code" ||
-            rawPropName === "AssemblyPositionCode"
-          )
-        ) {
+        } else if (asmClass === "code" && !result.assemblyPosCode) {
           result.assemblyPosCode = asmVal;
-        }
-
-        // Generic assembly (fallback for display)
-        if (
-          !result.assembly && (
-            propName === "assembly" ||
-            normalized === "assemblymark" ||
-            normalized === "assemblycode" ||
-            propName === "tekla assembly mark" ||
-            propName === "tekla_assembly" ||
-            normalized === "mainmark" ||
-            normalized === "preliminarymark"
-          )
-        ) {
+        } else if (asmClass === "generic" && !result.assembly) {
           result.assembly = asmVal;
         }
       }
@@ -791,19 +794,8 @@ function parseObjectProperties(props, modelId) {
         if (!result.profile) result.profile = String(propValue || "");
       }
 
-      // Detect Tekla via specific property names
-      if (
-        propName === "assembly_pos" ||
-        propName === "assemblypos" ||
-        propName === "main_part" ||
-        propName === "mainpart" ||
-        propName === "phase" ||
-        propName === "tekla assembly mark" ||
-        propName === "tekla_assembly" ||
-        propName === "class" ||
-        propName === "preliminarymark" ||
-        propName === "preliminary mark"
-      ) {
+      // Detect Tekla via assembly-related property names (using classifier)
+      if (!result.isTekla && classifyAssemblyProperty(rawPropName)) {
         result.isTekla = true;
       }
 
@@ -828,15 +820,7 @@ function parseObjectProperties(props, modelId) {
     }
   }
 
-  // Debug: log parsed assembly fields for first Tekla objects
-  if (result.isTekla && window._teklaDebugCount < 3) {
-    window._teklaDebugCount++;
-    console.log(`[TEKLA PARSED] Object ${result.id} "${result.name}"`,
-      `| assemblyPos="${result.assemblyPos}"`,
-      `| assemblyName="${result.assemblyName}"`,
-      `| assemblyPosCode="${result.assemblyPosCode}"`,
-      `| assembly="${result.assembly}"`);
-  }
+
 
   // Fallback name
   if (!result.name) result.name = `Object ${props.id}`;
