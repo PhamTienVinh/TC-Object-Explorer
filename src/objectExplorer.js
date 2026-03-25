@@ -1431,18 +1431,30 @@ function handleViewerSelectionChanged(data) {
     applyHighlightColors();
 
     // Step 8: Scroll to the first selected item in the panel
-    // Use setTimeout to let the DOM settle after updates
+    // Use setTimeout to ensure DOM is fully updated before scrolling
     setTimeout(() => {
       const firstSel = document.querySelector(".tree-item.selected");
-      if (firstSel) {
-        // Expand the parent group so the item is visible
-        const group = firstSel.closest(".tree-group");
-        if (group && group.classList.contains("collapsed")) {
-          group.classList.remove("collapsed");
-        }
-        firstSel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      if (!firstSel) {
+        console.log("[ViewerSync] No .tree-item.selected found to scroll to");
+        return;
       }
-    }, 50);
+
+      // Expand the parent group so the item is visible
+      const group = firstSel.closest(".tree-group");
+      if (group && group.classList.contains("collapsed")) {
+        group.classList.remove("collapsed");
+      }
+
+      // Manual scroll: calculate position relative to tree container
+      const treeContainer = document.getElementById("object-tree");
+      if (treeContainer) {
+        const containerRect = treeContainer.getBoundingClientRect();
+        const itemRect = firstSel.getBoundingClientRect();
+        const scrollOffset = itemRect.top - containerRect.top - (containerRect.height / 2) + treeContainer.scrollTop;
+        treeContainer.scrollTo({ top: Math.max(0, scrollOffset), behavior: "smooth" });
+        console.log(`[ViewerSync] Scrolled to selected item (scrollTop=${Math.max(0, scrollOffset).toFixed(0)})`);
+      }
+    }, 100);
   } catch (e) {
     console.warn("[ObjectExplorer] Viewer selection sync error:", e);
   }
