@@ -1425,12 +1425,14 @@ function handleViewerSelectionChanged(data) {
     }
 
     // Step 7: Update summary + statistics
+    updateGroupCheckboxStates();
     updateSummary();
     notifySelectionChanged();
     applyHighlightColors();
 
-    // Step 8: Expand the group of the first selected item and scroll to it
-    if (!selectionFromPanel) {
+    // Step 8: Scroll to the first selected item in the panel
+    // Use setTimeout to let the DOM settle after updates
+    setTimeout(() => {
       const firstSel = document.querySelector(".tree-item.selected");
       if (firstSel) {
         // Expand the parent group so the item is visible
@@ -1440,7 +1442,7 @@ function handleViewerSelectionChanged(data) {
         }
         firstSel.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }
-    }
+    }, 50);
   } catch (e) {
     console.warn("[ObjectExplorer] Viewer selection sync error:", e);
   }
