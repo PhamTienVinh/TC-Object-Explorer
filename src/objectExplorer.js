@@ -1576,17 +1576,29 @@ function handleViewerSelectionChanged(data) {
 
     // Auto-scroll to the first selected item in the tree
     if (matchedUids.size > 0) {
-      const firstUid = matchedUids.values().next().value;
-      const firstEl = document.querySelector(`.tree-item[data-uid="${CSS.escape(firstUid)}"]`);
-      if (firstEl) {
-        // Auto-expand the parent group if it's collapsed
-        const parentGroup = firstEl.closest(".tree-group");
-        if (parentGroup && parentGroup.classList.contains("collapsed")) {
-          parentGroup.classList.remove("collapsed");
+      // Use requestAnimationFrame to ensure DOM is updated before scrolling
+      requestAnimationFrame(() => {
+        const firstUid = matchedUids.values().next().value;
+        // Find the element by iterating (avoids CSS.escape issues with colons in UIDs)
+        const allTreeItems = document.querySelectorAll(".tree-item");
+        let targetEl = null;
+        for (const el of allTreeItems) {
+          if (el.dataset.uid === firstUid) {
+            targetEl = el;
+            break;
+          }
         }
-        // Smooth scroll to the selected item
-        firstEl.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
+        if (targetEl) {
+          // Auto-expand the parent group if it's collapsed
+          const parentGroup = targetEl.closest(".tree-group");
+          if (parentGroup && parentGroup.classList.contains("collapsed")) {
+            parentGroup.classList.remove("collapsed");
+          }
+          // Instant scroll to the selected item (nhảy ngay)
+          targetEl.scrollIntoView({ behavior: "auto", block: "center" });
+          console.log(`[ObjectExplorer] Auto-scrolled to object: ${firstUid}`);
+        }
+      });
     }
   } catch (e) {
     console.warn("[ObjectExplorer] Viewer selection sync error:", e);
