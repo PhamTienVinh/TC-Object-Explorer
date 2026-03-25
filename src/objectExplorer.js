@@ -136,28 +136,25 @@ async function scanObjects() {
 
     if (modelObjectsList && modelObjectsList.length > 0) {
       // ModelObjects has { modelId, objects: ObjectProperties[] }
+      // Always fetch full properties via getObjectProperties() for complete data
+      // (inline properties from getObjects() are often incomplete — missing quantities)
       for (const modelObjs of modelObjectsList) {
         const modelId = modelObjs.modelId;
         const objects = modelObjs.objects || [];
 
         if (objects.length === 0) continue;
 
-        // Check if objects already have full properties (class, product, properties)
-        const hasProperties = objects[0] && objects[0].properties;
+        // Extract all runtime IDs
+        const objectIds = objects.map((o) =>
+          typeof o === "number" ? o : o.id,
+        ).filter((id) => id !== undefined && id !== null);
 
-        if (hasProperties) {
-          // Objects already have inline properties — parse directly
-          for (const obj of objects) {
-            const parsed = parseObjectProperties(obj, modelId);
-            allObjects.push(parsed);
-          }
-        } else {
-          // Objects are minimal (just IDs) — need to fetch properties
-          const objectIds = objects.map((o) =>
-            typeof o === "number" ? o : o.id,
-          );
-          await fetchAndParseProperties(modelId, objectIds);
-        }
+        console.log(
+          `[ObjectExplorer] Model ${modelId}: ${objectIds.length} objects — fetching full properties via getObjectProperties()`,
+        );
+
+        // Always fetch complete properties (like TC Data Table does)
+        await fetchAndParseProperties(modelId, objectIds);
       }
     }
 
