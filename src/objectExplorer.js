@@ -1041,8 +1041,8 @@ function toggleSelection(uid, el) {
   syncSelectionToViewer();
 }
 
-// ── Select Assembly — find ASSEMBLY_POS of selected object, select all matching ──
-// Flow: select 1 object → click Select Assembly → find its assemblyPos → select all objects with same assemblyPos
+// ── Select Assembly — select all objects sharing the same assembly as the selected object ──
+// Flow: select 1 object → click Select Assembly → find its assembly group → select all objects in that group
 async function selectAssembly() {
   if (!viewerRef) return;
 
@@ -1084,115 +1084,57 @@ async function selectAssembly() {
     }
 
     if (!selModelId || selObjectIds.length === 0) {
-      console.log("[SelectAssembly] No object selected");
+      console.log("[SelectAssembly] No object selected in viewer or panel");
       return;
     }
 
     const objectId = selObjectIds[0];
     const objectKey = `${selModelId}:${objectId}`;
-    console.log(`[SelectAssembly] Selected objectKey=${objectKey}`);
+    console.log(`[SelectAssembly] Looking for objectKey=${objectKey} in ${allObjects.length} objects`);
 
-    // Step 2: Find this object in allObjects and get its assemblyPos
-    let assemblyPosValue = "";
+    // Step 2: Find this object in allObjects
     const selectedObj = allObjects.find(o => `${o.modelId}:${o.id}` === objectKey);
 
-    if (selectedObj && selectedObj.assemblyPos) {
-      assemblyPosValue = selectedObj.assemblyPos;
-      console.log(`[SelectAssembly] Found in allObjects: name="${selectedObj.name}", assemblyPos="${assemblyPosValue}"`);
-    }
-
-    // Fallback: if object not in allObjects (or no assemblyPos), fetch from viewer API
-    if (!assemblyPosValue) {
-      console.log("[SelectAssembly] Object not in allObjects or has no assemblyPos, fetching from viewer API...");
-      try {
-        const propsArray = await viewerRef.getObjectProperties(selModelId, [objectId]);
-        if (propsArray && propsArray.length > 0) {
-          const props = propsArray[0];
-          for (const pSet of (props.properties || [])) {
-            for (const prop of (pSet.properties || [])) {
-              const rawName = prop.name || "";
-              const norm = rawName.toLowerCase().replace(/[\s_.\-]/g, "");
-              const isAssemblyPos = (
-                norm === "assemblypos" ||
-                rawName === "ASSEMBLY_POS" ||
-                rawName === "ASSEMBLY.ASSEMBLY_POS" ||
-                rawName === "Assembly_Pos" ||
-                rawName === "AssemblyPos" ||
-                rawName === "ASSEMBLY_POSITION" ||
-                rawName === "Assembly Position" ||
-                rawName === "AssemblyMark" ||
-                rawName === "ASSEMBLY_MARK" ||
-                rawName === "Assembly Mark" ||
-                rawName === "Assembly_Mark"
-              );
-              const isExcluded = norm.includes("code") || norm.includes("prefix");
-
-              if (isAssemblyPos && !isExcluded) {
-                assemblyPosValue = String(prop.value || "").trim();
-                console.log(`[SelectAssembly] From API: ASSEMBLY_POS="${assemblyPosValue}" (from "${rawName}")`);
-                break;
-              }
-            }
-            if (assemblyPosValue) break;
-          }
-
-          if (!assemblyPosValue) {
-            console.log("[SelectAssembly] ASSEMBLY_POS not found. All properties:");
-            for (const pSet of (props.properties || [])) {
-              for (const prop of (pSet.properties || [])) {
-                console.log(`  [${pSet.name}] ${prop.name} = ${prop.value}`);
-              }
-            }
-          }
-        }
-      } catch (e) {
-        console.warn("[SelectAssembly] getObjectProperties failed:", e);
-      }
-    }
-
-    if (!assemblyPosValue) {
-      console.log("[SelectAssembly] No ASSEMBLY_POS found for this object — cannot select assembly");
+    if (!selectedObj) {
+      console.log(`[SelectAssembly] Object ${objectKey} NOT found in allObjects`);
+      // Debug: log first 5 objects to compare ID formats
+      console.log("[SelectAssembly] Sample allObjects keys:", allObjects.slice(0, 5).map(o => `${o.modelId}:${o.id}`));
       return;
     }
 
-    // Step 3: Select ALL objects with the same assemblyPos
+    console.log(`[SelectAssembly] Found object: name="${selectedObj.name}", assemblyPos="${selectedObj.assemblyPos}", assemblyName="${selectedObj.assemblyName}", assemblyInstanceId="${selectedObj.assemblyInstanceId}"`);
+
+    // Step 3: Determine the assembly identifier to match
+    const assemblyId = selectedObj.assemblyInstanceId;
+    if (!assemblyId) {
+      console.log("[SelectAssembly] Object has no assembly identifier (assemblyPos, assemblyName, or assembly are all empty)");
+      return;
+    }
+
+    // Step 4: Select ALL objects with the same assemblyInstanceId
     selectedIds.clear();
     let count = 0;
     for (const obj of allObjects) {
-      if (obj.assemblyPos === assemblyPosValue) {
+      if (obj.assemblyInstanceId === assemblyId) {
         selectedIds.add(`${obj.modelId}:${obj.id}`);
         count++;
       }
     }
-    console.log(`[SelectAssembly] Selected ${count} objects with ASSEMBLY_POS="${assemblyPosValue}"`);
+    console.log(`[SelectAssembly] Selected ${count} objects with assemblyInstanceId="${assemblyId}"`);
 
     if (count === 0) {
       console.log("[SelectAssembly] No matching objects found");
       return;
     }
 
-    // Step 4: Update UI
+    // Step 5: Update tree UI
     document.querySelectorAll(".tree-item").forEach((el) => {
       const uid = el.dataset.uid;
       const isSelected = selectedIds.has(uid);
       el.classList.toggle("selected", isSelected);
       const cb = el.querySelector(".tree-item-checkbox");
       if (cb) cb.checked = isSelected;
-
-      // Auto-expand collapsed parent group
-      if (isSelected) {
-        const group = el.closest(".tree-group");
-        if (group && group.classList.contains("collapsed")) {
-          group.classList.remove("collapsed");
-        }
-      }
     });
-
-    // Scroll first selected item into view
-    const firstSel = document.querySelector(".tree-item.selected");
-    if (firstSel) {
-      firstSel.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }
 
     updateGroupCheckboxStates();
     updateSummary();
